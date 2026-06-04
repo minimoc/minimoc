@@ -1,0 +1,35 @@
+%TF.GenerationSoftware,KiCad,Pcbnew,9.0.5*%
+%TF.CreationDate,2026-02-14T16:40:19+01:00*%
+%TF.ProjectId,MIDISHIELD_v0.2_dessus,4d494449-5348-4494-954c-445f76302e32,rev?*%
+%TF.SameCoordinates,Original*%
+%TF.FileFunction,Copper,L2,Bot*%
+%TF.FilePolarity,Positive*%
+%FSLAX46Y46*%
+G04 Gerber Fmt 4.6, Leading zero omitted, Abs format (unit mm)*
+G04 Created by KiCad (PCBNEW 9.0.5) date 2026-02-14 16:40:19*
+%MOMM*%
+%LPD*%
+G01*
+G04 APERTURE LIST*
+%TA.AperFunction,ComponentPad*%
+%ADD10C,6.400000*%
+%TD*%
+G04 APERTURE END LIST*
+D10*
+%TO.P,REF\u002A\u002A,1*%
+%TO.N,N/C*%
+X94000000Y-5000000D03*
+%TD*%
+%TO.P,REF\u002A\u002A,1*%
+%TO.N,N/C*%
+X5000000Y-75000000D03*
+%TD*%
+%TO.P,REF\u002A\u002A,1*%
+%TO.N,N/C*%
+X94000000Y-75000000D03*
+%TD*%
+%TO.P,REF\u002A\u002A,1*%
+%TO.N,N/C*%
+X5000000Y-5000000D03*
+%TD*%
+M02*

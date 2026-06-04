@@ -1,0 +1,2294 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>miniMoc Editor</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #111827;
+      color: #f9fafb;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── HEADER ── */
+    .header {
+      background: #1f2937;
+      border-bottom: 1px solid #374151;
+      padding: 0 24px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      flex-shrink: 0;
+    }
+    .logo {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: #10b981;
+      text-transform: uppercase;
+      margin-right: 4px;
+    }
+    .logo span { color: #f9fafb; }
+    .header-sep { width: 1px; height: 28px; background: #374151; flex-shrink: 0; }
+    .midi-select {
+      background: #111827;
+      border: 1px solid #374151;
+      color: #f9fafb;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 13px;
+      cursor: pointer;
+      max-width: 230px;
+    }
+    .midi-select:focus { outline: none; border-color: #10b981; }
+    .conn-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .conn-dot.connected    { background: #10b981; box-shadow: 0 0 6px #10b981aa; }
+    .conn-dot.disconnected { background: #6b7280; }
+    .conn-label { font-size: 12px; color: #9ca3af; white-space: nowrap; }
+    .spacer { flex: 1; }
+    .preset-area {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .preset-label { font-size: 13px; color: #9ca3af; }
+    .preset-spinner {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+    .preset-num {
+      font-size: 15px;
+      font-weight: 700;
+      color: #f9fafb;
+      min-width: 26px;
+      text-align: center;
+    }
+    .dirty-star { color: #f59e0b; }
+    .preset-arrow {
+      background: none;
+      border: 1px solid #374151;
+      color: #9ca3af;
+      border-radius: 4px;
+      width: 22px; height: 22px;
+      font-size: 12px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.12s;
+    }
+    .preset-arrow:hover { background: #374151; color: #f9fafb; }
+
+    .btn {
+      padding: 5px 14px;
+      border-radius: 6px;
+      border: 1px solid #374151;
+      background: #374151;
+      color: #f9fafb;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+      white-space: nowrap;
+    }
+    .btn:hover:not(:disabled) { background: #4b5563; border-color: #6b7280; }
+    .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .btn.primary {
+      background: #10b981;
+      border-color: #10b981;
+      color: #fff;
+    }
+    .btn.primary:hover:not(:disabled) { background: #059669; border-color: #059669; }
+    .btn.danger {
+      background: transparent;
+      border-color: #ef4444;
+      color: #ef4444;
+    }
+    .btn.danger:hover:not(:disabled) { background: #ef444422; }
+    .btn.amber {
+      background: #f59e0b;
+      border-color: #d97706;
+      color: #111827;
+      font-weight: 600;
+    }
+    .btn.amber:hover:not(:disabled) { background: #d97706; }
+
+    /* ── LAYOUT ── */
+    .app-body {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      height: calc(100vh - 56px);
+    }
+    .sidebar {
+      width: 200px;
+      background: #1f2937;
+      border-right: 1px solid #374151;
+      padding: 20px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      flex-shrink: 0;
+      overflow-y: auto;
+    }
+    .nav-link {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 20px;
+      color: #9ca3af;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      border-left: 3px solid transparent;
+      transition: color 0.15s, background 0.15s;
+      user-select: none;
+    }
+    .nav-link:hover { color: #f9fafb; background: #ffffff0a; }
+    .nav-link.active { color: #10b981; border-left-color: #10b981; background: #10b98110; }
+    .nav-icon { font-size: 15px; width: 20px; text-align: center; }
+
+    .main-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 28px 32px;
+    }
+
+    /* ── SECTION TITLES ── */
+    .section-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: #f9fafb;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .section-title .badge {
+      font-size: 11px;
+      font-weight: 600;
+      background: #374151;
+      color: #9ca3af;
+      padding: 2px 8px;
+      border-radius: 12px;
+      letter-spacing: 0.05em;
+    }
+    .panel {
+      background: #1f2937;
+      border: 1px solid #374151;
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .panel-hint {
+      color: #9ca3af;
+      font-size: 13px;
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+
+    /* ── NO MIDI ── */
+    .no-midi {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      min-height: 360px;
+      color: #9ca3af;
+      text-align: center;
+    }
+    .no-midi .icon { font-size: 52px; }
+    .no-midi h2   { font-size: 20px; color: #f9fafb; }
+    .no-midi p    { font-size: 14px; max-width: 380px; line-height: 1.65; }
+
+    /* ── SYNC SECTION ── */
+    .sync-grid {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .sync-box {
+      width: 96px;
+      height: 76px;
+      border-radius: 10px;
+      border: 2px solid #374151;
+      background: #111827;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s;
+      color: #6b7280;
+      user-select: none;
+    }
+    .sync-box:hover { border-color: #6b7280; color: #d1d5db; }
+    .sync-box.active {
+      background: #f9fafb;
+      border-color: #f9fafb;
+      color: #111827;
+      box-shadow: 0 0 16px #f9fafb44;
+    }
+
+    /* ── MATRICE SECTION ── */
+    .matrix-table {
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .matrix-table th, .matrix-table td {
+      text-align: center;
+      padding: 5px 6px;
+    }
+    .matrix-table th {
+      color: #9ca3af;
+      font-weight: 600;
+      font-size: 12px;
+      padding-bottom: 10px;
+    }
+    .matrix-table th.col-group-trs  { color: #6b7280; }
+    .matrix-table th.col-group-host { color: #8b5cf6; }
+    .matrix-table td.row-label.row-label-trs  { color: #6b7280; }
+    .matrix-table td.row-label.row-label-host { color: #8b5cf6; }
+    .matrix-table .row-sublabel { font-size: 9px; color: #4b5563; display: block; margin-top: 1px; line-height: 1; }
+    .matrix-table td.row-label {
+      color: #9ca3af;
+      font-weight: 600;
+      text-align: right;
+      padding-right: 14px;
+      font-size: 14px;
+    }
+    .matrix-cell {
+      width: 36px;
+      height: 36px;
+      border-radius: 6px;
+      border: 1px solid #374151;
+      background: #111827;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.12s;
+      font-size: 13px;
+      color: transparent;
+    }
+    .matrix-cell:hover { border-color: #6b7280; background: #1f2937; }
+    .matrix-cell.on {
+      background: #10b981;
+      border-color: #10b981;
+      color: #064e3b;
+    }
+    .matrix-cell.on::after { content: "✓"; }
+
+    /* ── FLUX SECTION ── */
+    .flux-list { display: flex; flex-direction: column; gap: 6px; }
+    .flux-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #111827;
+      border: 1px solid #374151;
+      border-radius: 8px;
+      padding: 9px 14px;
+    }
+    .flux-index {
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      color: #6b7280;
+      min-width: 26px;
+    }
+    .flux-active-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .flux-active-dot.on  { background: #10b981; }
+    .flux-active-dot.off { background: #4b5563; }
+    .flux-summary {
+      flex: 1;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      color: #d1d5db;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .flux-actions { display: flex; gap: 6px; flex-shrink: 0; }
+    .btn-sm {
+      padding: 3px 10px;
+      font-size: 12px;
+      border-radius: 5px;
+      border: 1px solid #374151;
+      background: #374151;
+      color: #f9fafb;
+      cursor: pointer;
+      transition: background 0.12s;
+      white-space: nowrap;
+    }
+    .btn-sm:hover { background: #4b5563; }
+    .btn-sm.danger { border-color: #ef444455; background: transparent; color: #ef4444; }
+    .btn-sm.danger:hover { background: #ef444420; }
+    .btn-sm.toggle-on  { background: #10b98122; border-color: #10b981; color: #10b981; }
+    .btn-sm.toggle-off { background: transparent; border-color: #6b7280;  color: #6b7280; }
+
+    /* ── FLUX EDITOR ── */
+    .flux-editor {
+      background: #111827;
+      border: 1px solid #374151;
+      border-radius: 10px;
+      padding: 22px;
+      margin-top: 14px;
+    }
+    .flux-editor-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #f9fafb;
+      margin-bottom: 18px;
+    }
+    .flux-editor-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .flux-editor-label {
+      font-size: 12px;
+      color: #9ca3af;
+      font-weight: 600;
+      min-width: 64px;
+      padding-top: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .port-buttons {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .port-btn-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+    .port-btn {
+      width: 42px;
+      height: 38px;
+      border-radius: 7px;
+      border: 1px solid #374151;
+      background: #1f2937;
+      color: #9ca3af;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+    .port-btn:hover { border-color: #6b7280; color: #f9fafb; }
+    .port-btn.on {
+      background: #10b981;
+      border-color: #10b981;
+      color: #fff;
+    }
+    .chan-hint-btn {
+      font-size: 9px;
+      color: #6b7280;
+      font-family: 'Courier New', monospace;
+      background: none;
+      border: 1px solid #37415188;
+      border-radius: 3px;
+      padding: 1px 4px;
+      cursor: pointer;
+      transition: all 0.12s;
+      max-width: 42px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .chan-hint-btn:hover { border-color: #6b7280; color: #d1d5db; }
+    .chan-hint-btn.set   { color: #10b981; border-color: #10b98155; }
+    .chan-hint-spacer    { height: 17px; }
+
+    .flux-editor-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 8px;
+      padding-top: 16px;
+      border-top: 1px solid #374151;
+    }
+
+    /* ── CHANNEL PICKER MODAL ── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: #000000aa;
+      z-index: 300;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal {
+      background: #1f2937;
+      border: 1px solid #374151;
+      border-radius: 12px;
+      padding: 22px;
+      min-width: 300px;
+      max-width: 340px;
+      box-shadow: 0 20px 60px #00000088;
+    }
+    .modal-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #f9fafb;
+      margin-bottom: 16px;
+    }
+    .preset-grid {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 5px;
+      margin-bottom: 18px;
+    }
+    .preset-grid-btn {
+      height: 30px;
+      border-radius: 5px;
+      border: 1px solid #374151;
+      background: #111827;
+      color: #9ca3af;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background .1s, color .1s;
+    }
+    .preset-grid-btn:hover  { background: #374151; color: #f9fafb; }
+    .preset-grid-btn.active { background: #10b981; border-color: #10b981; color: #fff; font-weight: 700; }
+    .preset-grid-btn.current { border-color: #6b7280; color: #f9fafb; }
+    .factory-row { display: flex; gap: 7px; margin-bottom: 18px; flex-wrap: wrap; }
+    .factory-btn {
+      flex: 1; min-width: 60px; height: 30px;
+      border-radius: 5px; border: 1px solid #374151;
+      background: #111827; color: #9ca3af;
+      font-size: 11px; cursor: pointer; transition: background .1s, color .1s;
+    }
+    .factory-btn:hover { background: #8b5cf622; border-color: #8b5cf6; color: #c4b5fd; }
+    .factory-section-label { font-size: 10px; color: #4b5563; text-transform: uppercase;
+      letter-spacing: .05em; margin-bottom: 7px; }
+    .ch-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+    .ch-btn {
+      height: 34px;
+      border-radius: 5px;
+      border: 1px solid #374151;
+      background: #111827;
+      color: #9ca3af;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+    .ch-btn:hover { border-color: #6b7280; color: #f9fafb; }
+    .ch-btn.on {
+      background: #10b981;
+      border-color: #10b981;
+      color: #fff;
+    }
+    .ch-all-btn {
+      grid-column: span 4;
+      height: 32px;
+      border-radius: 5px;
+      border: 1px solid #374151;
+      background: #374151;
+      color: #f9fafb;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.12s;
+      margin-bottom: 2px;
+    }
+    .ch-all-btn:hover { background: #4b5563; }
+    .ch-all-btn.on { background: #10b981; border-color: #10b981; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+    /* ── HOST CONFIG ── */
+    .mode-pill {
+      display: inline-flex;
+      border: 1px solid #374151;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 20px;
+    }
+    .mode-pill-btn {
+      padding: 8px 24px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      color: #9ca3af;
+      transition: all 0.15s;
+    }
+    .mode-pill-btn.active { background: #10b981; color: #fff; }
+
+    .host-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .host-table th {
+      text-align: left;
+      padding: 8px 14px;
+      color: #9ca3af;
+      font-size: 12px;
+      font-weight: 600;
+      border-bottom: 1px solid #374151;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .host-table td {
+      padding: 11px 14px;
+      border-bottom: 1px solid #37415155;
+      vertical-align: middle;
+    }
+    .host-table tr:last-child td { border-bottom: none; }
+    .port-label-badge {
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      font-weight: 700;
+      background: #374151;
+      color: #f9fafb;
+      padding: 3px 10px;
+      border-radius: 5px;
+    }
+    .slot-select {
+      background: #111827;
+      border: 1px solid #374151;
+      color: #f9fafb;
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .slot-select:focus { outline: none; border-color: #10b981; }
+    .slot-select:disabled { opacity: 0.4; cursor: not-allowed; }
+    .host-desc { color: #6b7280; font-size: 12px; }
+
+    /* ── TOAST ── */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #1f2937;
+      border: 1px solid #374151;
+      border-radius: 8px;
+      padding: 10px 18px;
+      font-size: 13px;
+      color: #f9fafb;
+      z-index: 500;
+      box-shadow: 0 4px 24px #00000066;
+      animation: slideUp 0.2s ease;
+    }
+    .toast.success { border-color: #10b981; color: #10b981; }
+    .toast.error   { border-color: #ef4444; color: #ef4444; }
+    .toast.info    { border-color: #60a5fa; color: #60a5fa; }
+    @keyframes slideUp {
+      from { transform: translateY(16px); opacity: 0; }
+      to   { transform: translateY(0);    opacity: 1; }
+    }
+
+    /* ── MISC ── */
+    .warning-note {
+      background: #f59e0b18;
+      border: 1px solid #f59e0b44;
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 12px;
+      color: #f59e0b;
+      margin-top: 14px;
+    }
+
+    /* ── SCROLLBAR ── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #111827; }
+    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+
+    /* ── FIRMWARE UPGRADE ── */
+    .fw-zone {
+      border: 2px dashed #374151;
+      border-radius: 10px;
+      padding: 36px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      color: #6b7280;
+      font-size: 14px;
+    }
+    .fw-zone:hover, .fw-zone.over {
+      border-color: #10b981;
+      color: #10b981;
+      background: #10b98108;
+    }
+    .fw-zone-icon { font-size: 40px; margin-bottom: 12px; }
+
+    .fw-file-info {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      background: #111827;
+      border: 1px solid #374151;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 13px;
+    }
+    .fw-info-name { font-weight: 600; color: #f9fafb; }
+    .fw-info-sub  { color: #6b7280; font-size: 12px; margin-top: 2px; }
+
+    .fw-progress-track {
+      background: #111827;
+      border-radius: 6px;
+      height: 8px;
+      overflow: hidden;
+      margin: 12px 0 6px;
+    }
+    .fw-progress-fill {
+      height: 100%;
+      background: #10b981;
+      border-radius: 6px;
+      transition: width 0.25s;
+    }
+    .fw-status { font-size: 12px; color: #9ca3af; font-family: 'Courier New', monospace; }
+
+    .fw-steps { display: flex; flex-direction: column; gap: 20px; }
+    .fw-step  { display: flex; gap: 14px; align-items: flex-start; }
+    .fw-step-num {
+      width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700;
+      background: #374151; color: #6b7280;
+    }
+    .fw-step-num.active { background: #10b981; color: #fff; }
+    .fw-step-num.done   { background: #10b98130; color: #10b981; }
+    .fw-step-body { padding-top: 3px; flex: 1; }
+    .fw-step-label { font-size: 13px; font-weight: 600; color: #f9fafb; margin-bottom: 4px; }
+    .fw-step-sub   { font-size: 12px; color: #6b7280; line-height: 1.5; }
+    .fw-step-actions { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── Constants ────────────────────────────────────────────────────────────────
+const MANUFACTURER_ID = 0x7D;
+const N_IN   = 5;
+const N_OUT  = 9;
+const IN_LABELS  = ['A', 'B', 'C', 'D', 'E'];
+const OUT_LABELS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
+const SYNC_LABELS = ['A', 'B', 'C', 'D', 'E', 'OFF'];
+const MIN_PRESET = 1;
+const MAX_PRESET = 32;
+
+const FACTORY_PRESETS_WEB = [
+  { name: 'Vide',      matrix: [0x000, 0x000, 0x000, 0x000, 0x000] },
+  { name: 'Diagonale', matrix: [0x001, 0x002, 0x004, 0x008, 0x010] },
+  { name: 'Merge',     matrix: [0x001, 0x001, 0x001, 0x001, 0x001] },
+  { name: 'Dispatch',  matrix: [0x1FF, 0x000, 0x000, 0x000, 0x000] },
+  { name: 'Total',     matrix: [0x1FF, 0x1FF, 0x1FF, 0x1FF, 0x1FF] },
+  { name: 'Split',     matrix: [0x007, 0x038, 0x000, 0x000, 0x000] },
+  { name: 'USB→TRS',  matrix: [0x000, 0x000, 0x001, 0x002, 0x004] },
+  { name: 'TRS→USB',  matrix: [0x040, 0x080, 0x000, 0x000, 0x000] },
+];
+
+// ── SysEx helpers ────────────────────────────────────────────────────────────
+function sysexMsg(body) {
+  return new Uint8Array([0xF0, ...body, 0xF7]);
+}
+
+function encodeFluxMsg(idx, flux) {
+  const data = [
+    MANUFACTURER_ID, 0x0A,
+    idx,
+    flux.in.length,
+    flux.out.length,
+    1, // toujours actif
+  ];
+  // chan_mask encodé sur 3 octets 7-bit : bits 0-6 | bits 7-13 | bits 14-15
+  for (const i of flux.in) {
+    data.push(i.port, i.chan_mask & 0x7F, (i.chan_mask >> 7) & 0x7F, (i.chan_mask >> 14) & 0x03);
+  }
+  for (const o of flux.out) {
+    data.push(o.port, o.chan_mask & 0x7F, (o.chan_mask >> 7) & 0x7F, (o.chan_mask >> 14) & 0x03);
+  }
+  return sysexMsg(data);
+}
+
+function fluxSummary(flux) {
+  const ins = (flux.in || []).map(i => {
+    const p = IN_LABELS[i.port] || '?';
+    if (!i.chan_mask) return p;
+    const bits = [];
+    for (let b = 0; b < 16; b++) if (i.chan_mask & (1 << b)) bits.push(b + 1);
+    return bits.length === 1 ? `${p}:${bits[0]}` : `${p}(${bits.length})`;
+  }).join(' ');
+  const outs = (flux.out || []).map(o => {
+    const p = o.port + 1;
+    if (!o.chan_mask) return `${p}`;
+    const bits = [];
+    for (let b = 0; b < 16; b++) if (o.chan_mask & (1 << b)) bits.push(b + 1);
+    return bits.length === 1 ? `${p}:${bits[0]}` : `${p}(${bits.length})`;
+  }).join(' ');
+  if (!ins && !outs) return '(vide)';
+  return `${ins || '?'} → ${outs || '?'}`;
+}
+
+function chanMaskLabel(mask) {
+  if (!mask) return 'ALL';
+  const bits = [];
+  for (let b = 0; b < 16; b++) if (mask & (1 << b)) bits.push(b + 1);
+  if (bits.length === 0) return 'ALL';
+  if (bits.length <= 3)  return bits.map(b => `ch${b}`).join(',');
+  return `×${bits.length}ch`;
+}
+
+// ── Intel HEX + OTA WebSerial helpers ────────────────────────────────────────
+
+function parseIntelHex(text) {
+  const segments = [];
+  let extBase = 0;
+  for (const raw of text.split('\n')) {
+    const ln = raw.trim();
+    if (!ln.startsWith(':') || ln.length < 11) continue;
+    const byteCount = parseInt(ln.slice(1,  3), 16);
+    const addr16    = parseInt(ln.slice(3,  7), 16);
+    const recType   = parseInt(ln.slice(7,  9), 16);
+    if (recType === 0x01) break;
+    if (recType === 0x04) {
+      extBase = ((parseInt(ln.slice(9,  11), 16) << 8) |
+                  parseInt(ln.slice(11, 13), 16)) << 16;
+      continue;
+    }
+    if (recType !== 0x00) continue;
+    const bytes = new Uint8Array(byteCount);
+    for (let i = 0; i < byteCount; i++)
+      bytes[i] = parseInt(ln.slice(9 + i*2, 11 + i*2), 16);
+    segments.push({ addr: extBase + addr16, bytes });
+  }
+  if (!segments.length) throw new Error('Aucune donnée dans ce fichier HEX');
+  const minAddr = segments.reduce((m, s) => Math.min(m, s.addr), Infinity);
+  const maxAddr = segments.reduce((m, s) => Math.max(m, s.addr + s.bytes.length), 0);
+  return { segments, minAddr, maxAddr };
+}
+
+function hexToBinary(parsedHex) {
+  const { segments, minAddr, maxAddr } = parsedHex;
+  const buf = new Uint8Array(maxAddr - minAddr).fill(0xFF);
+  for (const seg of segments) buf.set(seg.bytes, seg.addr - minAddr);
+  return buf;
+}
+
+function crc32(data) {
+  // IEEE 802.3 — doit correspondre à l'implémentation C++ sur le Teensy
+  const lut = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    lut[i] = c;
+  }
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < data.length; i++) crc = lut[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+class SerialLineReader {
+  constructor(readable) {
+    this._reader = readable.getReader();
+    this._buf    = '';
+    this._dec    = new TextDecoder();
+  }
+  async readLine(timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      const nl = this._buf.indexOf('\n');
+      if (nl >= 0) {
+        const line = this._buf.slice(0, nl).replace(/\r$/, '');
+        this._buf  = this._buf.slice(nl + 1);
+        return line;
+      }
+      const ms = deadline - Date.now();
+      if (ms <= 0) throw new Error('Timeout — pas de réponse du Teensy');
+      let timer;
+      const chunk = await Promise.race([
+        this._reader.read(),
+        new Promise((_, r) => { timer = setTimeout(() => r(new Error('Timeout — pas de réponse du Teensy')), ms); }),
+      ]).finally(() => clearTimeout(timer));
+      if (chunk.done) throw new Error('Port série fermé de façon inattendue');
+      this._buf += this._dec.decode(chunk.value, { stream: true });
+    }
+  }
+  releaseLock() { try { this._reader.releaseLock(); } catch(_) {} }
+}
+
+async function otaFlash(port, binary, onProgress, onStatus) {
+  await port.open({ baudRate: 115200 });
+  const writer = port.writable.getWriter();
+  const reader = new SerialLineReader(port.readable);
+  const enc    = new TextEncoder();
+  try {
+    onStatus('Ping…');
+    await writer.write(enc.encode('PING\n'));
+    const pong = await reader.readLine(4000);
+    if (pong !== 'PONG:READY') throw new Error(`Réponse inattendue au PING : "${pong || '(vide)'}"`);
+
+    onStatus('Démarrage du transfert…');
+    await writer.write(enc.encode(`START_UPDATE:${binary.length}\n`));
+    const ack0 = await reader.readLine(5000);
+    if (ack0 !== 'ACK') throw new Error(`Erreur démarrage : "${ack0}"`);
+
+    const CHUNK = 256;
+    const total = Math.ceil(binary.length / CHUNK);
+    for (let i = 0; i < total; i++) {
+      await writer.write(binary.slice(i * CHUNK, (i + 1) * CHUNK));
+      const ack = await reader.readLine(6000);
+      if (ack !== 'ACK') throw new Error(`Erreur chunk ${i + 1}/${total} : "${ack}"`);
+      onProgress((i + 1) / total);
+      onStatus(`Chunk ${i + 1}/${total}`);
+    }
+
+    onStatus('Vérification CRC…');
+    const crcHex = crc32(binary).toString(16).padStart(8, '0');
+    await writer.write(enc.encode(`END_UPDATE:${crcHex}\n`));
+    const result = await reader.readLine(8000);
+    if (result !== 'OK') throw new Error(`Validation échouée : "${result}"`);
+
+    onStatus('Succès — Teensy redémarre sur le nouveau firmware…');
+  } finally {
+    try { writer.releaseLock(); } catch(_) {}
+    reader.releaseLock();
+    await new Promise(r => setTimeout(r, 400));
+    try { await port.close(); } catch(_) {}
+  }
+}
+
+function makeDefaultState() {
+  return {
+    basicMatrix: Array(N_IN).fill(0),
+    fluxes:      [],
+    syncMaster:  0x7F,
+    hostMode:     0,
+    portSlot:     [0, 1, 2, 0, 1, 2],
+    deviceNames:  ['', '', '', '', '', ''],  // noms des slots D1..D6
+    preset:      1,
+  };
+}
+
+// ── Channel Picker Modal ─────────────────────────────────────────────────────
+function ChanPickerModal({ title, initMask, onConfirm, onCancel }) {
+  const [mask, setMask] = useState(initMask);
+  const allOff = mask === 0;
+
+  function toggle(b) { setMask(prev => prev ^ (1 << b)); }
+
+  return (
+    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onCancel(); }}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-title">{title}</div>
+        <div className="ch-grid">
+          <button
+            className={`ch-all-btn${allOff ? ' on' : ''}`}
+            onClick={() => setMask(0)}
+          >
+            ALL — passthrough (aucun filtre)
+          </button>
+          {Array.from({ length: 16 }, (_, i) => (
+            <button
+              key={i}
+              className={`ch-btn${(mask & (1 << i)) ? ' on' : ''}`}
+              onClick={() => toggle(i)}
+            >
+              {i + 1}
+            </button>
+          ))}
+        </div>
+        <div className="modal-actions">
+          <button className="btn" onClick={onCancel}>Annuler</button>
+          <button className="btn primary" onClick={() => onConfirm(mask)}>OK</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Flux Editor ──────────────────────────────────────────────────────────────
+function FluxEditor({ editingFlux, editingIdx, onSave, onCancel }) {
+  const [draft, setDraft] = useState(() => {
+    if (editingFlux) return JSON.parse(JSON.stringify(editingFlux));
+    return { in: [], out: [], active: true };
+  });
+  const [picker, setPicker] = useState(null); // {side, port}
+
+  function toggleIn(portIdx) {
+    setDraft(f => {
+      const has = f.in.some(x => x.port === portIdx);
+      return has
+        ? { ...f, in: f.in.filter(x => x.port !== portIdx) }
+        : { ...f, in: [...f.in, { port: portIdx, chan_mask: 0 }] };
+    });
+  }
+
+  function toggleOut(portIdx) {
+    setDraft(f => {
+      const has = f.out.some(x => x.port === portIdx);
+      return has
+        ? { ...f, out: f.out.filter(x => x.port !== portIdx) }
+        : { ...f, out: [...f.out, { port: portIdx, chan_mask: 0 }] };
+    });
+  }
+
+  function openPicker(side, port) { setPicker({ side, port }); }
+
+  function applyMask(mask) {
+    const { side, port } = picker;
+    setPicker(null);
+    setDraft(f => {
+      if (side === 'in') {
+        return { ...f, in:  f.in.map(x  => x.port === port ? { ...x, chan_mask: mask } : x) };
+      } else {
+        return { ...f, out: f.out.map(x => x.port === port ? { ...x, chan_mask: mask } : x) };
+      }
+    });
+  }
+
+  const pickerEntry = picker
+    ? (picker.side === 'in'
+        ? draft.in.find(x  => x.port === picker.port)
+        : draft.out.find(x => x.port === picker.port))
+    : null;
+
+  const valid = draft.in.length > 0 && draft.out.length > 0;
+
+  return (
+    <div className="flux-editor">
+      <div className="flux-editor-title">
+        {editingIdx === null ? 'Nouveau flux' : `Modifier F${editingIdx + 1}`}
+      </div>
+
+      {/* Input ports */}
+      <div className="flux-editor-row">
+        <div className="flux-editor-label">Entrées</div>
+        <div className="port-buttons">
+          {IN_LABELS.map((lbl, i) => {
+            const entry = draft.in.find(x => x.port === i);
+            const on    = !!entry;
+            return (
+              <div key={i} className="port-btn-wrap">
+                <button
+                  className={`port-btn${on ? ' on' : ''}`}
+                  onClick={() => toggleIn(i)}
+                >
+                  {lbl}
+                </button>
+                {on ? (
+                  <button
+                    className={`chan-hint-btn${entry.chan_mask ? ' set' : ''}`}
+                    onClick={() => openPicker('in', i)}
+                    title="Filtrer par canal"
+                  >
+                    {chanMaskLabel(entry.chan_mask)}
+                  </button>
+                ) : (
+                  <div className="chan-hint-spacer" />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Output ports */}
+      <div className="flux-editor-row">
+        <div className="flux-editor-label">Sorties</div>
+        <div className="port-buttons">
+          {OUT_LABELS.map((lbl, i) => {
+            const entry = draft.out.find(x => x.port === i);
+            const on    = !!entry;
+            return (
+              <div key={i} className="port-btn-wrap">
+                <button
+                  className={`port-btn${on ? ' on' : ''}`}
+                  onClick={() => toggleOut(i)}
+                >
+                  {lbl}
+                </button>
+                {on ? (
+                  <button
+                    className={`chan-hint-btn${entry.chan_mask ? ' set' : ''}`}
+                    onClick={() => openPicker('out', i)}
+                    title="Filtrer par canal"
+                  >
+                    {chanMaskLabel(entry.chan_mask)}
+                  </button>
+                ) : (
+                  <div className="chan-hint-spacer" />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flux-editor-actions">
+        <button
+          className="btn primary"
+          disabled={!valid}
+          onClick={() => onSave(draft)}
+        >
+          Valider
+        </button>
+        <button className="btn" onClick={onCancel}>Annuler</button>
+        {!valid && (
+          <span style={{ fontSize: 12, color: '#9ca3af', alignSelf: 'center' }}>
+            Sélectionnez au moins une entrée et une sortie
+          </span>
+        )}
+      </div>
+
+      {picker && (
+        <ChanPickerModal
+          title={`Canaux — ${picker.side === 'in' ? 'Entrée ' + IN_LABELS[picker.port] : 'Sortie ' + OUT_LABELS[picker.port]}`}
+          initMask={pickerEntry ? pickerEntry.chan_mask : 0}
+          onConfirm={applyMask}
+          onCancel={() => setPicker(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── DAT → MIDI utilities ─────────────────────────────────────────────────────
+
+const DAT_SOURCE_NAMES = {0:'PC-DAW', 1:'Entree-A', 2:'Entree-B', 3:'USB-Host-C', 4:'USB-Host-D', 5:'USB-Host-E'};
+const DAT_OUTPUT_NAMES = {1:'Sortie-1', 2:'Sortie-2', 3:'Sortie-3', 4:'Sortie-4', 5:'Sortie-5', 6:'Sortie-6', 7:'USB-Host-Out-1', 8:'USB-Host-Out-2', 9:'USB-Host-Out-3'};
+const DAT_VALID_TYPES  = new Set([0x80, 0x90, 0xA0, 0xB0, 0xC0, 0xD0, 0xE0]);
+
+function downloadBlob(data, filename) {
+  const blob = new Blob([data], { type: 'audio/midi' });
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement('a'), { href: url, download: filename });
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function encodeVarLen(n) {
+  if (n === 0) return [0];
+  const bytes = [];
+  while (n > 0) { bytes.push(n & 0x7F); n >>>= 7; }
+  bytes.reverse();
+  for (let i = 0; i < bytes.length - 1; i++) bytes[i] |= 0x80;
+  return bytes;
+}
+
+function parseDat(arrayBuffer) {
+  const EVENT_SIZE = 10;
+  const WRAP = 4294967296; // 2^32
+  const view = new DataView(arrayBuffer);
+  const count = Math.floor(view.byteLength / EVENT_SIZE);
+  const events = [];
+  let invalidRun = 0, tsOffset = 0, prevRawTs = 0;
+
+  for (let i = 0; i < count; i++) {
+    const off     = i * EVENT_SIZE;
+    const rawTs   = view.getUint32(off, true);
+    const output  = view.getUint8(off + 4);
+    const source  = view.getUint8(off + 5);
+    const type    = view.getUint8(off + 6);
+    const channel = view.getUint8(off + 7);
+    const d1      = view.getUint8(off + 8) & 0x7F;
+    const d2      = view.getUint8(off + 9) & 0x7F;
+
+    const typeNibble = type & 0xF0;
+    if (!DAT_VALID_TYPES.has(typeNibble) || output < 1 || output > 9 || channel < 1 || channel > 16) {
+      if (++invalidRun >= 32) break;
+      continue;
+    }
+    invalidRun = 0;
+    if (events.length > 0 && rawTs < prevRawTs - WRAP / 2) tsOffset += WRAP;
+    prevRawTs = rawTs;
+    events.push({ ts: rawTs + tsOffset, output, source, type: typeNibble, channel, d1, d2 });
+  }
+
+  if (events.length > 0) {
+    const t0 = events[0].ts;
+    for (const e of events) e.ts -= t0;
+  }
+  return events;
+}
+
+function buildTrackChunk(name, trackEvents, bpm, ppq) {
+  const usPerTick = (60000000 / bpm) / ppq;
+  const data = [];
+  const nameBytes = Array.from(new TextEncoder().encode(name));
+  data.push(0x00, 0xFF, 0x03, nameBytes.length, ...nameBytes);
+  let prevTick = 0;
+  for (const ev of trackEvents) {
+    const tick  = Math.round(ev.ts / usPerTick);
+    const delta = tick - prevTick;
+    prevTick = tick;
+    data.push(...encodeVarLen(delta));
+    const status = ev.type | ((ev.channel - 1) & 0x0F);
+    if (ev.type === 0xC0 || ev.type === 0xD0) data.push(status, ev.d1);
+    else data.push(status, ev.d1, ev.d2);
+  }
+  data.push(0x00, 0xFF, 0x2F, 0x00);
+  const chunk = new Uint8Array(8 + data.length);
+  chunk[0]=0x4D; chunk[1]=0x54; chunk[2]=0x72; chunk[3]=0x6B; // MTrk
+  const len = data.length;
+  chunk[4]=(len>>24)&0xFF; chunk[5]=(len>>16)&0xFF; chunk[6]=(len>>8)&0xFF; chunk[7]=len&0xFF;
+  chunk.set(data, 8);
+  return chunk;
+}
+
+function buildTempoTrack(bpm) {
+  const us = Math.round(60000000 / bpm);
+  const data = [0x00,0xFF,0x51,0x03,(us>>16)&0xFF,(us>>8)&0xFF,us&0xFF,0x00,0xFF,0x2F,0x00];
+  const chunk = new Uint8Array(8 + data.length);
+  chunk[0]=0x4D; chunk[1]=0x54; chunk[2]=0x72; chunk[3]=0x6B;
+  const len = data.length;
+  chunk[4]=(len>>24)&0xFF; chunk[5]=(len>>16)&0xFF; chunk[6]=(len>>8)&0xFF; chunk[7]=len&0xFF;
+  chunk.set(data, 8);
+  return chunk;
+}
+
+function encodeMidi(events, { bpm = 120, ppq = 960, splitBy = 'output' } = {}) {
+  const groups = new Map();
+  for (const ev of events) {
+    const key = splitBy === 'output' ? ev.output : ev.source;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(ev);
+  }
+  const tracks = [buildTempoTrack(bpm)];
+  for (const key of [...groups.keys()].sort((a,b) => a-b)) {
+    const name = splitBy === 'output'
+      ? (DAT_OUTPUT_NAMES[key] || `Sortie-${key}`)
+      : (DAT_SOURCE_NAMES[key] || `Source-${key}`);
+    tracks.push(buildTrackChunk(name, groups.get(key).sort((a,b) => a.ts - b.ts), bpm, ppq));
+  }
+  const numTracks = tracks.length;
+  const header = new Uint8Array([
+    0x4D,0x54,0x68,0x64, 0x00,0x00,0x00,0x06, // MThd length=6
+    0x00,0x01,                                  // format 1
+    (numTracks>>8)&0xFF, numTracks&0xFF,
+    (ppq>>8)&0xFF, ppq&0xFF,
+  ]);
+  const totalLen = header.length + tracks.reduce((s,t) => s + t.length, 0);
+  const out = new Uint8Array(totalLen);
+  let off = 0;
+  out.set(header, off); off += header.length;
+  for (const t of tracks) { out.set(t, off); off += t.length; }
+  return out;
+}
+
+// ── Firmware Section ─────────────────────────────────────────────────────────
+function FirmwareSection({ send, connected, showToast }) {
+  const [phase,    setPhase]    = useState('idle');
+  // phases: idle → parsed → connecting → flashing → done | error
+  const [fileInfo, setFileInfo] = useState(null); // { name, sizeKB, binary }
+  const [progress, setProgress] = useState(0);
+  const [status,   setStatus]   = useState('');
+  const [err,      setErr]      = useState('');
+  const fileRef = useRef(null);
+
+  const serialOK = !!navigator.serial;
+
+  function loadFile(file) {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.hex')) {
+      setErr("Le fichier doit avoir l'extension .hex");
+      return;
+    }
+    const fr = new FileReader();
+    fr.onload = ev => {
+      try {
+        const parsed = parseIntelHex(ev.target.result);
+        const binary = hexToBinary(parsed);
+        setFileInfo({ name: file.name, sizeKB: (binary.length / 1024).toFixed(1), binary });
+        setPhase('parsed');
+        setErr('');
+      } catch(e) { setErr(e.message); }
+    };
+    fr.readAsText(file);
+  }
+
+  async function handleFlash() {
+    if (!navigator.serial) {
+      setErr('WebSerial non supporté — utilisez Chrome ou Edge récent.');
+      return;
+    }
+    let port;
+    try {
+      setPhase('connecting');
+      setErr('');
+      port = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x16C0 }] });
+    } catch(e) {
+      setPhase('parsed');
+      if (e.name !== 'NotFoundError') setErr(e.message);
+      return;
+    }
+    setPhase('flashing');
+    setProgress(0);
+    setStatus('Connexion…');
+    try {
+      await otaFlash(port, fileInfo.binary, p => setProgress(p), s => setStatus(s));
+      setPhase('done');
+      showToast('Firmware mis à jour avec succès !', 'success');
+    } catch(e) {
+      setErr(e.message);
+      setPhase('error');
+    }
+  }
+
+  function reset() {
+    setPhase('idle'); setFileInfo(null);
+    setProgress(0); setStatus(''); setErr('');
+  }
+
+  return (
+    <>
+      <div className="section-title">
+        Mise à jour firmware
+        <span className="badge">FIRMWARE</span>
+      </div>
+
+      {!serialOK && (
+        <div className="warning-note">
+          WebSerial non disponible. Utilisez <strong>Google Chrome</strong> ou <strong>Microsoft Edge</strong> récent.
+        </div>
+      )}
+
+      {/* Sélection du fichier */}
+      <div className="panel">
+        <p className="panel-hint">
+          Compilez le sketch dans l'Arduino IDE (<strong>Croquis → Exporter le binaire compilé</strong>),
+          puis sélectionnez le fichier <code>.hex</code> généré.
+          Le miniMoc doit être branché via USB.
+        </p>
+        {phase === 'idle' ? (
+          <div
+            className="fw-zone"
+            onClick={() => fileRef.current?.click()}
+            onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('over'); }}
+            onDragLeave={e => e.currentTarget.classList.remove('over')}
+            onDrop={e => { e.preventDefault(); e.currentTarget.classList.remove('over'); loadFile(e.dataTransfer.files[0]); }}
+          >
+            <input ref={fileRef} type="file" accept=".hex" style={{ display:'none' }} onChange={e => loadFile(e.target.files[0])} />
+            <div className="fw-zone-icon">📂</div>
+            <div>Glissez un fichier <strong>.hex</strong> ici, ou cliquez pour sélectionner</div>
+          </div>
+        ) : (
+          <div className="fw-file-info">
+            <span style={{ fontSize: 22 }}>💾</span>
+            <div style={{ flex: 1 }}>
+              <div className="fw-info-name">{fileInfo?.name}</div>
+              <div className="fw-info-sub">{fileInfo?.sizeKB} KB — prêt pour le transfert WebSerial</div>
+            </div>
+            {phase !== 'flashing' && phase !== 'connecting' && (
+              <button className="btn" onClick={reset}>Changer</button>
+            )}
+          </div>
+        )}
+        {err && phase !== 'error' && <div className="warning-note" style={{ marginTop: 12 }}>{err}</div>}
+      </div>
+
+      {/* Flash */}
+      {fileInfo && (
+        <div className="panel">
+
+          {phase === 'parsed' && (
+            <>
+              <p className="panel-hint">
+                Cliquez <strong>Mettre à jour</strong> puis sélectionnez le port série du miniMoc dans le sélecteur.
+                Aucun redémarrage manuel requis — le transfert se fait directement via USB.
+              </p>
+              <button className="btn primary" onClick={handleFlash} disabled={!serialOK}>
+                ⬆ Mettre à jour le firmware
+              </button>
+            </>
+          )}
+
+          {phase === 'connecting' && (
+            <div className="fw-status" style={{ color: '#60a5fa', padding: '8px 0' }}>
+              ⏳ Sélectionnez le port série du miniMoc dans le sélecteur Chrome…
+            </div>
+          )}
+
+          {phase === 'flashing' && (
+            <>
+              <div className="fw-progress-track">
+                <div className="fw-progress-fill" style={{ width: `${Math.round(progress * 100)}%` }} />
+              </div>
+              <div className="fw-status">{status} — {Math.round(progress * 100)}%</div>
+            </>
+          )}
+
+          {phase === 'done' && (
+            <div className="fw-status" style={{ color: '#10b981', padding: '8px 0' }}>
+              ✓ Mise à jour terminée — le Teensy redémarre sur la nouvelle partition.
+            </div>
+          )}
+
+          {phase === 'error' && (
+            <>
+              <div className="warning-note" style={{ marginBottom: 12 }}>{err}</div>
+              <button className="btn" onClick={() => { setPhase('parsed'); setErr(''); }}>
+                Réessayer
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ── DAT → MIDI Section ───────────────────────────────────────────────────────
+function DatToMidiSection({ showToast }) {
+  const [datFile,    setDatFile]    = useState(null);   // { name, sizeKB, events }
+  const [splitBy,    setSplitBy]    = useState('output');
+  const [bpm,        setBpm]        = useState(120);
+  const [avail,      setAvail]      = useState([]);     // [{key, name, count}]
+  const [selected,   setSelected]   = useState(new Set());
+  const [result,     setResult]     = useState(null);
+  const [error,      setError]      = useState('');
+  const fileRef = useRef(null);
+
+  function computeTracks(events, split) {
+    const counts = new Map();
+    for (const ev of events) {
+      const k = split === 'output' ? ev.output : ev.source;
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort(([a],[b]) => a - b)
+      .map(([key, count]) => ({
+        key,
+        name: split === 'output'
+          ? (DAT_OUTPUT_NAMES[key] || `Sortie-${key}`)
+          : (DAT_SOURCE_NAMES[key] || `Source-${key}`),
+        count,
+      }));
+  }
+
+  function loadDat(file) {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.dat')) {
+      setError("Le fichier doit avoir l'extension .dat");
+      return;
+    }
+    const fr = new FileReader();
+    fr.onload = ev => {
+      const events = parseDat(ev.target.result);
+      const tracks = computeTracks(events, splitBy);
+      setDatFile({ name: file.name, sizeKB: (ev.target.result.byteLength / 1024).toFixed(1), events });
+      setAvail(tracks);
+      setSelected(new Set(tracks.map(t => t.key)));
+      setResult(null);
+      setError('');
+    };
+    fr.readAsArrayBuffer(file);
+  }
+
+  function handleSplitChange(newSplit) {
+    setSplitBy(newSplit);
+    if (datFile) {
+      const tracks = computeTracks(datFile.events, newSplit);
+      setAvail(tracks);
+      setSelected(new Set(tracks.map(t => t.key)));
+      setResult(null);
+    }
+  }
+
+  function toggleTrack(key) {
+    setSelected(s => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; });
+  }
+
+  function handleConvert() {
+    try {
+      const filtered = datFile.events.filter(ev => {
+        const k = splitBy === 'output' ? ev.output : ev.source;
+        return selected.has(k);
+      });
+      if (filtered.length === 0) {
+        setError('Aucun événement dans les pistes sélectionnées.');
+        return;
+      }
+      const midiData = encodeMidi(filtered, { bpm, splitBy });
+      downloadBlob(midiData, datFile.name.replace(/\.dat$/i, '.mid'));
+      const lastTs = filtered[filtered.length - 1].ts;
+      setResult({ eventCount: filtered.length, trackCount: selected.size, durationSec: (lastTs / 1000000).toFixed(1) });
+      showToast('Fichier MIDI téléchargé !', 'success');
+      setError('');
+    } catch(e) {
+      setError(e.message);
+    }
+  }
+
+  function reset() { setDatFile(null); setAvail([]); setSelected(new Set()); setResult(null); setError(''); }
+
+  return (
+    <>
+      <div className="section-title">
+        Convertisseur DAT → MIDI
+        <span className="badge">DAT → MIDI</span>
+      </div>
+
+      {/* Fichier */}
+      <div className="panel">
+        <p className="panel-hint">
+          Convertissez un enregistrement <code>.dat</code> du miniMoc en fichier MIDI standard (Type 1).
+          Compatible avec tous les DAW. Aucune connexion requise.
+        </p>
+        {!datFile ? (
+          <div
+            className="fw-zone"
+            onClick={() => fileRef.current?.click()}
+            onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('over'); }}
+            onDragLeave={e => e.currentTarget.classList.remove('over')}
+            onDrop={e => { e.preventDefault(); e.currentTarget.classList.remove('over'); loadDat(e.dataTransfer.files[0]); }}
+          >
+            <input ref={fileRef} type="file" accept=".dat" style={{ display:'none' }} onChange={e => loadDat(e.target.files[0])} />
+            <div className="fw-zone-icon">🎵</div>
+            <div>Glissez un fichier <strong>.dat</strong> ici, ou cliquez pour sélectionner</div>
+          </div>
+        ) : (
+          <div className="fw-file-info">
+            <span style={{ fontSize: 22 }}>🎵</span>
+            <div style={{ flex: 1 }}>
+              <div className="fw-info-name">{datFile.name}</div>
+              <div className="fw-info-sub">{datFile.events.length.toLocaleString()} événements · {datFile.sizeKB} KB</div>
+            </div>
+            <button className="btn" onClick={reset}>Changer</button>
+          </div>
+        )}
+        {error && <div className="warning-note" style={{ marginTop: 12 }}>{error}</div>}
+      </div>
+
+      {/* Options + sélection des pistes */}
+      {datFile && (
+        <div className="panel">
+          <p className="panel-hint" style={{ marginBottom: 14 }}>Options de conversion</p>
+
+          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'center', marginBottom: 18 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14 }}>
+              BPM
+              <input
+                type="number" min="20" max="300" step="1"
+                value={bpm}
+                onChange={e => setBpm(Math.max(20, Math.min(300, +e.target.value || 120)))}
+                style={{ width: 70, background: '#111827', border: '1px solid #374151', color: '#f9fafb', borderRadius: 6, padding: '4px 8px', fontSize: 14 }}
+              />
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14 }}>
+              Grouper par
+              <select
+                value={splitBy}
+                onChange={e => handleSplitChange(e.target.value)}
+                className="midi-select"
+                style={{ maxWidth: 180 }}
+              >
+                <option value="output">Sortie (1–9)</option>
+                <option value="source">Entrée (A–E)</option>
+              </select>
+            </label>
+          </div>
+
+          {/* Sélection individuelle des pistes */}
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <span style={{ fontSize: 13, color: '#9ca3af' }}>
+                Pistes ({selected.size}/{avail.length} sélectionnées)
+              </span>
+              <span style={{ display: 'flex', gap: 6 }}>
+                <button className="btn-sm" onClick={() => setSelected(new Set(avail.map(t => t.key)))}>Tout</button>
+                <button className="btn-sm" onClick={() => setSelected(new Set())}>Aucun</button>
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {avail.map(t => {
+                const on = selected.has(t.key);
+                return (
+                  <div
+                    key={t.key}
+                    onClick={() => toggleTrack(t.key)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6,
+                      fontSize: 13, cursor: 'pointer', userSelect: 'none',
+                      background: on ? '#10b98118' : '#111827',
+                      border: `1px solid ${on ? '#10b981' : '#374151'}`,
+                      borderRadius: 6, padding: '4px 10px',
+                      color: on ? '#f9fafb' : '#6b7280',
+                      transition: 'all 0.12s',
+                    }}
+                  >
+                    <span style={{ fontSize: 10, color: on ? '#10b981' : '#4b5563' }}>{on ? '■' : '□'}</span>
+                    {t.name}
+                    <span style={{ fontSize: 11, color: '#6b7280' }}>({t.count})</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <button className="btn primary" onClick={handleConvert} disabled={selected.size === 0}>
+            ⬇ Convertir et télécharger le .mid
+          </button>
+          {result && (
+            <div style={{ marginTop: 14, fontSize: 13, color: '#9ca3af' }}>
+              ✓ {result.eventCount.toLocaleString()} événements · {result.trackCount} piste{result.trackCount > 1 ? 's' : ''} · {result.durationSec} s
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ── Toast ────────────────────────────────────────────────────────────────────
+function Toast({ message, type, onDone }) {
+  useEffect(() => {
+    const t = setTimeout(onDone, 2400);
+    return () => clearTimeout(t);
+  }, []);
+  return <div className={`toast ${type}`}>{message}</div>;
+}
+
+// ── Main App ─────────────────────────────────────────────────────────────────
+function App() {
+  // MIDI
+  const [midiSupported, setMidiSupported] = useState(true);
+  const [midiAccess,    setMidiAccess]    = useState(null);
+  const [inputPorts,    setInputPorts]    = useState([]);   // [{id, name}]
+  const [selectedPort,  setSelectedPort]  = useState('');
+  const [connected,     setConnected]     = useState(false);
+  const inputRef      = useRef(null);
+  const outputRef     = useRef(null);
+  const heartbeatRef  = useRef(null);
+  const lastPongRef   = useRef(0);      // timestamp du dernier pong reçu
+  const PONG_TIMEOUT  = 1500;           // ms sans pong → déconnecté
+
+  // Device state
+  const [dev,   setDev]   = useState(makeDefaultState);
+  const [dirty, setDirty] = useState(false);
+
+  // UI
+  const [section,     setSection]     = useState('sync');
+  const [showEditor,  setShowEditor]  = useState(false);
+  const [editingIdx,  setEditingIdx]  = useState(null);
+  const [toast,       setToast]       = useState(null);
+  const [presetModal, setPresetModal] = useState(null); // {mode:'load'|'save', selected:n}
+
+  // ── send ──
+  function send(body) {
+    if (!outputRef.current) return;
+    try { outputRef.current.send(sysexMsg(body)); }
+    catch (e) { console.warn('MIDI send error', e); }
+  }
+
+  function showToast(msg, type = 'success') {
+    setToast({ msg, type, key: Date.now() });
+  }
+
+  // ── SysEx parser ──
+  function parseSysex(bytes) {
+    if (bytes[0] !== 0xF0 || bytes[1] !== MANUFACTURER_ID || bytes[bytes.length - 1] !== 0xF7) return;
+    const cmd  = bytes[2];
+    const body = bytes.slice(3, bytes.length - 1);
+
+    // Tout message valide reçu = device vivant
+    lastPongRef.current = Date.now();
+    setConnected(true);
+
+    // Le pong 0x08 ne modifie pas le state — juste le timestamp ci-dessus
+    if (cmd === 0x08) return;
+
+    setDev(prev => {
+      switch (cmd) {
+        case 0x07: // preset
+          return { ...prev, preset: body[0] };
+
+        case 0x09: { // basic matrix cell
+          const [inIdx, outIdx, val] = body;
+          if (inIdx >= N_IN || outIdx >= N_OUT) return prev;
+          const mat = [...prev.basicMatrix];
+          if (val) mat[inIdx] |=  (1 << outIdx);
+          else     mat[inIdx] &= ~(1 << outIdx);
+          return { ...prev, basicMatrix: mat };
+        }
+
+        case 0x0B: // flux count — reset list
+          return { ...prev, fluxes: [] };
+
+        case 0x0A: { // flux data
+          let ptr = 0;
+          const idx    = body[ptr++];
+          const n_in   = body[ptr++];
+          const n_out  = body[ptr++];
+          const active = body[ptr++] !== 0;
+          // chan_mask : 3 octets 7-bit → bits 0-6 | bits 7-13 | bits 14-15
+          const ins = [];
+          for (let i = 0; i < n_in;  i++) {
+            const port = body[ptr++];
+            const lo   = body[ptr++];
+            const mid  = body[ptr++];
+            const top  = body[ptr++];
+            ins.push({ port, chan_mask: lo | (mid << 7) | (top << 14) });
+          }
+          const outs = [];
+          for (let i = 0; i < n_out; i++) {
+            const port = body[ptr++];
+            const lo   = body[ptr++];
+            const mid  = body[ptr++];
+            const top  = body[ptr++];
+            outs.push({ port, chan_mask: lo | (mid << 7) | (top << 14) });
+          }
+          const fluxes = [...prev.fluxes];
+          fluxes[idx] = { in: ins, out: outs, active };
+          return { ...prev, fluxes };
+        }
+
+        case 0x0C: // sync master
+          return { ...prev, syncMaster: body[0] };
+
+        case 0x0D: // host config — 0x7F sur le fil = aucun slot (HC_NO_SLOT)
+          return {
+            ...prev,
+            hostMode: body[0],
+            portSlot: Array.from(body.slice(1, 7)).map(v => v >= 6 ? 0x7F : v),
+          };
+
+        case 0x0F: { // nom device USB — F0 7D 0F slotIdx nameChars... F7
+          const slotIdx = body[0];
+          if (slotIdx >= 6) return prev;
+          const name = String.fromCharCode(...Array.from(body.slice(1)));
+          const deviceNames = [...(prev.deviceNames || ['','','','','',''])];
+          deviceNames[slotIdx] = name;
+          return { ...prev, deviceNames };
+        }
+
+        default: return prev;
+      }
+    });
+  }
+
+  // ── MIDI init ──
+  useEffect(() => {
+    if (!navigator.requestMIDIAccess) { setMidiSupported(false); return; }
+    navigator.requestMIDIAccess({ sysex: true })
+      .then(access => {
+        setMidiAccess(access);
+        refreshPorts(access);
+        access.onstatechange = () => refreshPorts(access);
+      })
+      .catch(() => setMidiSupported(false));
+  }, []);
+
+  function refreshPorts(access) {
+    const list = [];
+    access.inputs.forEach(p => list.push({ id: p.id, name: p.name }));
+    setInputPorts(list);
+    // Auto-select miniMoc
+    const moc = list.find(p => p.name.toUpperCase().includes('MINIMOC'));
+    if (moc) setSelectedPort(prev => prev || moc.id);
+  }
+
+  // ── Connect / disconnect ──
+  useEffect(() => {
+    if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
+    if (inputRef.current)     { inputRef.current.onmidimessage = null; inputRef.current = null; }
+    outputRef.current = null;
+    setConnected(false);
+
+    if (!midiAccess || !selectedPort) return;
+
+    const inPort = midiAccess.inputs.get(selectedPort);
+    if (!inPort) return;
+
+    // Match output by name
+    let outPort = null;
+    midiAccess.outputs.forEach(p => { if (p.name === inPort.name) outPort = p; });
+    if (!outPort) return;
+
+    inputRef.current  = inPort;
+    outputRef.current = outPort;
+    lastPongRef.current = 0;   // reset : pas encore de réponse
+
+    inPort.onmidimessage = e => {
+      if (e.data[0] === 0xF0) parseSysex(e.data);
+    };
+
+    // NE PAS setConnected(true) ici — on attend le premier pong
+
+    // Request full dump after short delay
+    const dumpTimer = setTimeout(() => {
+      if (outputRef.current) outputRef.current.send(sysexMsg([MANUFACTURER_ID, 0x02]));
+    }, 300);
+
+    // Heartbeat + quick poll toutes les 500ms
+    // La connexion devient vraie seulement quand un message est reçu
+    // Si aucun pong depuis PONG_TIMEOUT → déconnecté
+    heartbeatRef.current = setInterval(() => {
+      try {
+        if (!outputRef.current) return;
+        outputRef.current.send(sysexMsg([MANUFACTURER_ID, 0x08]));
+        outputRef.current.send(sysexMsg([MANUFACTURER_ID, 0x0E]));
+        // Vérifier le timeout : si on a déjà eu un pong mais plus rien depuis PONG_TIMEOUT
+        if (lastPongRef.current > 0 && Date.now() - lastPongRef.current > PONG_TIMEOUT) {
+          setConnected(false);
+        }
+      } catch (_) {
+        setConnected(false);
+      }
+    }, 500);
+
+    return () => {
+      clearTimeout(dumpTimer);
+      clearInterval(heartbeatRef.current);
+      if (inputRef.current) inputRef.current.onmidimessage = null;
+    };
+  }, [midiAccess, selectedPort]);
+
+  // ── Actions ──────────────────────────────────────────────────────────────
+  function doSync() {
+    if (!outputRef.current) return;
+    outputRef.current.send(sysexMsg([MANUFACTURER_ID, 0x02]));
+    setDirty(false);
+    showToast('Synchronisation demandée', 'info');
+  }
+
+  function applyFactory(tpl) {
+    if (dirty && !window.confirm(`Appliquer "${tpl.name}" ? Les modifications non sauvegardées seront perdues.`)) return;
+    // Supprimer tous les flux existants (ordre décroissant)
+    for (let i = dev.fluxes.length - 1; i >= 0; i--) {
+      send([MANUFACTURER_ID, 0x0B, i]);
+    }
+    // Appliquer la basic_matrix via 0x09
+    for (let inIdx = 0; inIdx < 5; inIdx++) {
+      for (let outIdx = 0; outIdx < 9; outIdx++) {
+        const val = (tpl.matrix[inIdx] >> outIdx) & 1;
+        send([MANUFACTURER_ID, 0x09, inIdx, outIdx, val]);
+      }
+    }
+    setDev(prev => ({ ...prev, basicMatrix: [...tpl.matrix], fluxes: [] }));
+    setDirty(true);
+    setPresetModal(null);
+    showToast(`Template "${tpl.name}" appliqué`);
+  }
+
+  function doLoad() {
+    setPresetModal({ mode: 'load', selected: dev.preset });
+  }
+
+  function doSave() {
+    setPresetModal({ mode: 'save', selected: dev.preset });
+  }
+
+  function confirmPresetModal() {
+    if (!presetModal) return;
+    const { mode, selected } = presetModal;
+    if (mode === 'load') {
+      send([MANUFACTURER_ID, 0x05, selected]);
+      setDirty(false);
+      showToast(`Preset ${selected} chargé`);
+    } else {
+      send([MANUFACTURER_ID, 0x06, selected]);
+      setDirty(false);
+      showToast(`Preset ${selected} sauvegardé`);
+    }
+    setPresetModal(null);
+  }
+
+  function setSync(val) {
+    setDev(prev => ({ ...prev, syncMaster: val }));
+    send([MANUFACTURER_ID, 0x0C, val]);
+    setDirty(true);
+  }
+
+  function toggleMatrix(inIdx, outIdx) {
+    setDev(prev => {
+      const mat = [...prev.basicMatrix];
+      const was = (mat[inIdx] >> outIdx) & 1;
+      const val = was ? 0 : 1;
+      if (val) mat[inIdx] |=  (1 << outIdx);
+      else     mat[inIdx] &= ~(1 << outIdx);
+      send([MANUFACTURER_ID, 0x09, inIdx, outIdx, val]);
+      setDirty(true);
+      return { ...prev, basicMatrix: mat };
+    });
+  }
+
+  function handleFluxSave(flux) {
+    const idx = editingIdx !== null ? editingIdx : dev.fluxes.length;
+    const nf  = { ...flux, in: [...flux.in], out: [...flux.out] };
+    setDev(prev => {
+      const fluxes = [...prev.fluxes];
+      fluxes[idx]  = nf;
+      return { ...prev, fluxes };
+    });
+    outputRef.current && outputRef.current.send(encodeFluxMsg(idx, nf));
+    setDirty(true);
+    setShowEditor(false);
+    setEditingIdx(null);
+    showToast(`Flux F${idx + 1} sauvegardé`);
+  }
+
+  function deleteFlux(idx) {
+    if (!confirm(`Supprimer le flux F${idx + 1} ?`)) return;
+    send([MANUFACTURER_ID, 0x0B, idx]);
+    setDev(prev => {
+      const fluxes = prev.fluxes.filter((_, i) => i !== idx);
+      return { ...prev, fluxes };
+    });
+    setDirty(true);
+    showToast(`Flux F${idx + 1} supprimé`, 'info');
+  }
+
+  function setHostMode(mode) {
+    setDev(prev => {
+      const next = { ...prev, hostMode: mode };
+      send([MANUFACTURER_ID, 0x0D, mode, ...next.portSlot]);
+      setDirty(true);
+      return next;
+    });
+  }
+
+  function setPortSlot(slotIdx, val) {
+    setDev(prev => {
+      const portSlot = [...prev.portSlot];
+      portSlot[slotIdx] = val;
+      send([MANUFACTURER_ID, 0x0D, prev.hostMode, ...portSlot]);
+      setDirty(true);
+      return { ...prev, portSlot };
+    });
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  const isConnected = connected && !!outputRef.current;
+
+  return (
+    <>
+      {/* HEADER */}
+      <header className="header">
+        <div className="logo">mini<span>Moc</span></div>
+        <div className="header-sep" />
+
+        <select
+          className="midi-select"
+          value={selectedPort}
+          onChange={e => setSelectedPort(e.target.value)}
+        >
+          <option value="">— Port MIDI —</option>
+          {inputPorts.map(p => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+
+        <div className={`conn-dot ${isConnected ? 'connected' : 'disconnected'}`} />
+        <span className="conn-label">{isConnected ? 'Connecté' : 'Déconnecté'}</span>
+
+        <div className="spacer" />
+
+        <div className="preset-area">
+          <span className="preset-label">Preset</span>
+          <span className="preset-num">
+            {dev.preset}{dirty && <span className="dirty-star"> *</span>}
+          </span>
+          <button className="btn" disabled={!isConnected} onClick={doLoad}>Charger</button>
+          <button className="btn amber" disabled={!isConnected} onClick={doSave}>Sauver</button>
+        </div>
+      </header>
+
+      <div className="app-body">
+        {/* SIDEBAR */}
+        <nav className="sidebar">
+          {[
+            { id: 'sync',   icon: '⟳', label: 'SYNC'        },
+            { id: 'matrix', icon: '⊞', label: 'MATRICE'      },
+            { id: 'flux',   icon: '⇄', label: 'FLUX'         },
+            { id: 'host',     icon: '⚙', label: 'HOST CONFIG'  },
+            { id: 'firmware', icon: '⬆', label: 'FIRMWARE'     },
+            { id: 'dat2midi', icon: '♪', label: 'DAT → MIDI'   },
+          ].map(item => (
+            <div
+              key={item.id}
+              className={`nav-link${section === item.id ? ' active' : ''}`}
+              onClick={() => setSection(item.id)}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              {item.label}
+            </div>
+          ))}
+        </nav>
+
+        {/* MAIN */}
+        <main className="main-content">
+
+          {/* ── No Web MIDI support ── */}
+          {!midiSupported && (
+            <div className="no-midi">
+              <div className="icon">🚫</div>
+              <h2>Web MIDI non supporté</h2>
+              <p>Ce navigateur ne supporte pas le Web MIDI API avec SysEx. Utilisez <strong>Google Chrome</strong> ou <strong>Microsoft Edge</strong>. Firefox ne supporte pas SysEx.</p>
+            </div>
+          )}
+
+          {/* ── Not connected ── */}
+          {midiSupported && !isConnected && section !== 'firmware' && section !== 'dat2midi' && (
+            <div className="no-midi">
+              <div className="icon">🎛</div>
+              <h2>Brancher le miniMoc via USB</h2>
+              <p>
+                Connectez votre miniMoc via USB, puis sélectionnez le port MIDI dans la liste ci-dessus.
+                La page doit être ouverte en <strong>HTTPS</strong> ou depuis <strong>localhost</strong> pour accéder au Web MIDI API.
+              </p>
+            </div>
+          )}
+
+          {/* ── Connected UI ── */}
+          {midiSupported && isConnected && (
+            <>
+              {/* ═══ SYNC ═══ */}
+              {section === 'sync' && (
+                <>
+                  <div className="section-title">
+                    Maître de synchronisation
+                    <span className="badge">SYNC</span>
+                  </div>
+                  <div className="panel">
+                    <p className="panel-hint">
+                      Le port sélectionné transmet son clock MIDI à tous les autres ports. Choisissez OFF pour désactiver le routage du clock.
+                    </p>
+                    <div className="sync-grid">
+                      {SYNC_LABELS.map((lbl, i) => {
+                        const val      = i < 5 ? i : 0x7F;
+                        const isActive = dev.syncMaster === val;
+                        return (
+                          <div
+                            key={lbl}
+                            className={`sync-box${isActive ? ' active' : ''}`}
+                            onClick={() => setSync(val)}
+                          >
+                            {lbl}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* ═══ MATRICE ═══ */}
+              {section === 'matrix' && (
+                <>
+                  <div className="section-title">
+                    Matrice de routage
+                    <span className="badge">MATRICE</span>
+                  </div>
+                  <div className="panel" style={{ overflowX: 'auto' }}>
+                    <p className="panel-hint">
+                      Cliquez sur une cellule pour activer ou désactiver le routage entre une entrée (ligne) et une sortie (colonne).
+                      Les sorties 7–9 correspondent aux ports USB Host.
+                    </p>
+                    <table className="matrix-table">
+                      <thead>
+                        <tr>
+                          <th />
+                          {OUT_LABELS.map((lbl, i) => (
+                            <th key={i} className={i >= 6 ? 'col-group-host' : 'col-group-trs'}>
+                              {lbl}
+                            </th>
+                          ))}
+                        </tr>
+                        <tr>
+                          <th />
+                          {OUT_LABELS.map((_, i) => (
+                            <th key={i} style={{ fontSize: 9, color: '#4b5563', paddingTop: 0, paddingBottom: 8 }}>
+                              {i < 6 ? 'TRS' : 'USB'}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {IN_LABELS.map((inLbl, inIdx) => (
+                          <tr key={inLbl}>
+                            <td className={`row-label ${inIdx >= 2 ? 'row-label-host' : 'row-label-trs'}`}>
+                              {inLbl}
+                              <span className="row-sublabel">{inIdx >= 2 ? 'USB' : 'TRS'}</span>
+                            </td>
+                            {OUT_LABELS.map((_, outIdx) => {
+                              const on = !!((dev.basicMatrix[inIdx] >> outIdx) & 1);
+                              return (
+                                <td key={outIdx}>
+                                  <button
+                                    className={`matrix-cell${on ? ' on' : ''}`}
+                                    onClick={() => toggleMatrix(inIdx, outIdx)}
+                                    title={`${inLbl} → ${outIdx + 1}`}
+                                  />
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+
+              {/* ═══ FLUX ═══ */}
+              {section === 'flux' && (
+                <>
+                  <div className="section-title">
+                    Flux de routage
+                    <span className="badge">FLUX</span>
+                  </div>
+                  <div className="panel">
+                    <p className="panel-hint">
+                      Les flux permettent un routage avancé avec filtrage par canal MIDI. Cliquez sur le canal (ALL / ch×N) pour ouvrir le sélecteur. Clic droit sur un bouton de port actif pour l'accès rapide.
+                    </p>
+
+                    <div className="flux-list">
+                      {dev.fluxes.length === 0 && !showEditor && (
+                        <div style={{ color: '#6b7280', fontSize: 13, padding: '8px 0' }}>
+                          Aucun flux configuré.
+                        </div>
+                      )}
+                      {dev.fluxes.map((f, idx) => f && (
+                        <div key={idx} className="flux-row">
+                          <div className="flux-index">F{idx + 1}</div>
+                          <div className="flux-summary">{fluxSummary(f)}</div>
+                          <div className="flux-actions">
+                            <button
+                              className="btn-sm"
+                              onClick={() => {
+                                setEditingIdx(idx);
+                                setShowEditor(true);
+                              }}
+                            >
+                              Éditer
+                            </button>
+                            <button
+                              className="btn-sm danger"
+                              onClick={() => deleteFlux(idx)}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {!showEditor && (
+                      <button
+                        className="btn primary"
+                        style={{ marginTop: 14 }}
+                        onClick={() => { setEditingIdx(null); setShowEditor(true); }}
+                      >
+                        + Nouveau flux
+                      </button>
+                    )}
+                  </div>
+
+                  {showEditor && (
+                    <FluxEditor
+                      editingFlux={editingIdx !== null ? dev.fluxes[editingIdx] : null}
+                      editingIdx={editingIdx}
+                      onSave={handleFluxSave}
+                      onCancel={() => { setShowEditor(false); setEditingIdx(null); }}
+                    />
+                  )}
+                </>
+              )}
+
+              {/* ═══ HOST CONFIG ═══ */}
+              {section === 'host' && (
+                <>
+                  <div className="section-title">
+                    Configuration USB Host
+                    <span className="badge">HOST CONFIG</span>
+                  </div>
+                  <div className="panel">
+                    <p className="panel-hint">
+                      Associez les ports logiques USB Host (IN C/D/E, OUT 7/8/9) aux slots physiques de l'interface.
+                    </p>
+
+                    <div>
+                      <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 8, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        Mode de détection
+                      </div>
+                      <div className="mode-pill">
+                        <button
+                          className={`mode-pill-btn${dev.hostMode === 0 ? ' active' : ''}`}
+                          onClick={() => setHostMode(0)}
+                        >
+                          AUTO
+                        </button>
+                        <button
+                          className={`mode-pill-btn${dev.hostMode === 1 ? ' active' : ''}`}
+                          onClick={() => setHostMode(1)}
+                        >
+                          MANUEL
+                        </button>
+                      </div>
+                    </div>
+
+                    <table className="host-table">
+                      <thead>
+                        <tr>
+                          <th>Port logique</th>
+                          <th>Slot physique</th>
+                          <th>Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[
+                          { label: 'IN C',  idx: 0, desc: 'Entrée USB Host C — maps to physical slot' },
+                          { label: 'IN D',  idx: 1, desc: 'Entrée USB Host D — maps to physical slot' },
+                          { label: 'IN E',  idx: 2, desc: 'Entrée USB Host E — maps to physical slot' },
+                          { label: 'OUT 7', idx: 3, desc: 'Sortie USB Host 7 — maps to physical slot' },
+                          { label: 'OUT 8', idx: 4, desc: 'Sortie USB Host 8 — maps to physical slot' },
+                          { label: 'OUT 9', idx: 5, desc: 'Sortie USB Host 9 — maps to physical slot' },
+                        ].map(row => (
+                          <tr key={row.idx}>
+                            <td><span className="port-label-badge">{row.label}</span></td>
+                            <td>
+                              <select
+                                className="slot-select"
+                                value={dev.portSlot[row.idx] === 0x7F ? 0x7F : (dev.portSlot[row.idx] ?? 0)}
+                                disabled={dev.hostMode === 0}
+                                onChange={e => setPortSlot(row.idx, parseInt(e.target.value))}
+                              >
+                                <option value={0x7F}>—</option>
+                                {[0,1,2,3,4,5].map(d => {
+                                  const nm = dev.deviceNames?.[d];
+                                  return (
+                                    <option key={d} value={d}>
+                                      {nm ? `${nm}` : `D${d + 1}`}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            </td>
+                            <td className="host-desc">{row.desc}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+
+                    {dev.hostMode === 0 && (
+                      <div className="warning-note">
+                        En mode AUTO, les slots sont détectés automatiquement. Passez en mode MANUEL pour les configurer manuellement.
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+            </>
+          )}
+
+          {/* ═══ FIRMWARE ═══ — accessible même sans connexion MIDI active */}
+          {midiSupported && section === 'firmware' && (
+            <FirmwareSection
+              send={send}
+              connected={isConnected}
+              showToast={showToast}
+            />
+          )}
+
+          {/* ═══ DAT → MIDI ═══ — accessible sans connexion MIDI active */}
+          {midiSupported && section === 'dat2midi' && (
+            <DatToMidiSection showToast={showToast} />
+          )}
+        </main>
+      </div>
+
+      {/* MODAL PRESET */}
+      {presetModal && (
+        <div className="modal-overlay" onClick={() => setPresetModal(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ minWidth: 380 }}>
+            <div className="modal-title">
+              {presetModal.mode === 'load' ? 'Charger un preset' : 'Sauvegarder sur le preset'}
+            </div>
+
+            {/* Templates d'usine — uniquement pour le chargement */}
+            {presetModal.mode === 'load' && (
+              <div style={{ marginBottom: 16 }}>
+                <div className="factory-section-label">Templates d'usine</div>
+                <div className="factory-row">
+                  {FACTORY_PRESETS_WEB.map(tpl => (
+                    <button key={tpl.name} className="factory-btn" onClick={() => applyFactory(tpl)}>
+                      {tpl.name}
+                    </button>
+                  ))}
+                </div>
+                <div className="factory-section-label">Presets utilisateur</div>
+              </div>
+            )}
+
+            <div className="preset-grid">
+              {Array.from({ length: MAX_PRESET }, (_, i) => i + 1).map(n => (
+                <button
+                  key={n}
+                  className={`preset-grid-btn${presetModal.selected === n ? ' active' : ''}${dev.preset === n && presetModal.selected !== n ? ' current' : ''}`}
+                  onClick={() => setPresetModal(pm => ({ ...pm, selected: n }))}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn" onClick={() => setPresetModal(null)}>Annuler</button>
+              <button className="btn primary" onClick={confirmPresetModal}>
+                {presetModal.mode === 'load' ? `Charger preset ${presetModal.selected}` : `Sauver sur preset ${presetModal.selected}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TOAST */}
+      {toast && (
+        <Toast
+          key={toast.key}
+          message={toast.msg}
+          type={toast.type}
+          onDone={() => setToast(null)}
+        />
+      )}
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

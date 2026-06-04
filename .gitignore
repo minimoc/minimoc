@@ -1,0 +1,20 @@
+# Firmware build
+.pio/
+build/
+*.hex
+*.elf
+
+# KiCad temporaires
+*-backups/
+*.bak
+*.kicad_pcb-bak
+fp-info-cache
+*.lck
+
+# Enregistrements / gros binaires de test
+*.DAT
+*.dat
+
+# OS
+.DS_Store
+Thumbs.db

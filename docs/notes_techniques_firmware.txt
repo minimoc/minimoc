@@ -1,0 +1,396 @@
+================================================================================
+  miniMoc v0.2 — Notes techniques firmware
+  Teensy 4.1 @ 600 MHz
+  Date : 28 mai 2026
+================================================================================
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. GESTION MIDI ET ROUTAGE DES MESSAGES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+─── 1.1  Ports physiques TRS (UART hardware) ────────────────────────────────
+
+Le Teensy 4.1 dispose de nombreux UARTs indépendants. Chaque port MIDI TRS
+est câblé sur un Serial dédié, géré en interruption hardware. Les buffers ont
+été agrandis à 1 024 octets (au lieu de 64 par défaut) pour absorber ~330 ms
+de MIDI dense sans perte lors des opérations longues (SD write, OLED).
+
+  Port   UART      Objet MIDI        Rôle
+  ─────────────────────────────────────────────────────────────────────
+  IN A   Serial2   MIDIA             Entrée TRS A
+  IN B   Serial1   MIDIB             Entrée TRS B
+  OUT 1  Serial8   MIDI1             Sortie physique 1
+  OUT 2  Serial3   MIDI2             Sortie physique 2
+  OUT 3  Serial7   MIDI3             Sortie physique 3
+  OUT 4  Serial6   MIDI4             Sortie physique 4
+  OUT 5  Serial2   MIDI5 = MIDIA_5   Sortie 5 (même UART que IN A)
+  OUT 6  Serial1   MIDI6 = MIDIB_6   Sortie 6 (même UART que IN B)
+
+  NOTE : MIDI5 et MIDI6 partagent l'UART avec les entrées A et B.
+  Cela ne pose AUCUN problème de routage A→5 ou B→6 (voir § 1.5).
+
+
+─── 1.2  Ports USB Host (C, D, E / sorties 7, 8, 9) ────────────────────────
+
+Six objets MIDIDevice_BigBuffer (MIDIUSB1…MIDIUSB6) sont déclarés sur le bus
+USB Host. Ils sont assignés dynamiquement aux ports logiques C/D/E (entrées)
+et 7/8/9 (sorties) via le tableau port_slot[6]. Cette indirection permet de
+reconfigurer quel device physique répond à quel port logique sans recompiler.
+
+  port_slot[0..2] = slot physique pour les ENTREES C, D, E
+  port_slot[3..5] = slot physique pour les SORTIES 7, 8, 9
+
+Les devices USB se connectent dans l'ordre FIFO : le premier device branché
+prend MIDIUSB1 (slot 0), le deuxième MIDIUSB2 (slot 1), etc. Le menu HOST
+CONFIG permet de réassigner logiquement ces slots sans hot-plug.
+
+
+─── 1.3  Matrice de routage route_matrix[5][16][9] ─────────────────────────
+
+C'est le cœur de toute la logique de routage. Déclaration :
+
+  uint16_t route_matrix[5][16][9]
+    [input  0-4 ] : A, B, C (USB Host), D (USB Host), E (USB Host)
+    [canal  0-15] : canaux MIDI 1-16
+    [sortie 0-8 ] : OUT 1-6 (TRS physiques) + OUT 7/8/9 (USB Host)
+    valeur        : bitmask uint16_t — bit i actif = canal (i+1) sur cette sortie
+
+Cette matrice est PRÉCALCULÉE au chargement du preset par la fonction
+recompute_route_matrix(). Elle n'est jamais modifiée pendant le routage en
+temps réel, ce qui rend la lecture atomique et très rapide.
+
+Elle combine deux couches :
+  - BASIC  : mapping simple entrée→sortie, passthrough de canal
+  - FLUX   : règles canal→canal avancées (many-to-many, remapping de canal)
+
+Dans chaque handler (handleNoteOn, handleControlChange…), une double boucle
+parcourt les 9 sorties et, pour chaque sortie, itère sur les bits actifs du
+bitmask via __builtin_ctz (instruction CPU native, ~1 cycle). Complexité
+O(sorties × canaux actifs), typiquement < 5 µs par message routé.
+
+
+─── 1.4  Smart Mirror — mirroring vers le DAW (PC) ─────────────────────────
+
+La conception est symétrique : chaque port possède un câble USB numéroté
+identiquement pour les deux sens (Teensy→PC et PC→Teensy). Le mirroring
+s'effectue à trois niveaux :
+
+  NIVEAU 1 — Entrées brutes vers DAW
+    Dans loop(), MIDIA.read() et MIDIB.read() envoient immédiatement le
+    message reçu sur le câble USB correspondant (USB_PORT_A=1, USB_PORT_B=2)
+    AVANT tout routage. Le DAW reçoit donc une copie exacte de l'entrée.
+
+  NIVEAU 2 — Sorties routées vers DAW
+    Dans les macros SEND_NOTE_ON/OFF etc., chaque envoi vers une sortie
+    physique est SIMULTANÉMENT mirrored vers le câble USB correspondant
+    (USB_OUT_1…USB_OUT_9). Guard : if(src!=SRC_PC) pour éviter la double
+    boucle lorsque le message vient déjà du DAW.
+
+  NIVEAU 3 — USB Host vers DAW
+    Les callbacks _usb_note_on() envoient d'abord le miroir vers le DAW
+    (usbMIDI.sendNoteOn sur HC_IN_CABLE[p]) puis déclenchent le routage
+    via handleNoteOn(). Le DAW voit donc les entrées USB Host sur ses
+    propres câbles (C=3, D=4, E=5).
+
+  Tableau des câbles USB :
+    USB_PORT_A  = 1    IN A   <-> DAW  (miroir + inject)
+    USB_PORT_B  = 2    IN B   <-> DAW
+    USB_IN_C    = 3    USB Host IN C <-> DAW
+    USB_IN_D    = 4    USB Host IN D <-> DAW
+    USB_IN_E    = 5    USB Host IN E <-> DAW
+    USB_OUT_1   = 6    Sortie physique 1 (miroir vers DAW)
+    USB_OUT_2   = 7    Sortie physique 2
+    USB_OUT_3   = 8    Sortie physique 3
+    USB_OUT_4   = 9    Sortie physique 4
+    USB_OUT_5   = 10   Sortie physique 5
+    USB_OUT_6   = 11   Sortie physique 6
+    USB_OUT_7   = 12   USB Host OUT 7 (miroir vers DAW)
+    USB_OUT_8   = 13   USB Host OUT 8
+    USB_OUT_9   = 14   USB Host OUT 9
+    Câble 0     = 0    Éditeur SysEx (commandes de configuration)
+
+
+─── 1.5  Clarification : MIDI5/MIDI6 et routage A→5 ou B→6 ─────────────────
+
+MIDI5 = MIDIA = MIDIA_5 = Serial2  (même objet C++)
+MIDI6 = MIDIB = MIDIB_6 = Serial1  (même objet C++)
+
+La question : router A→5 (ou B→6) pose-t-il un problème puisqu'ils partagent
+le même UART ?
+
+RÉPONSE : NON, aucun problème.
+
+Un UART est FULL-DUPLEX par nature hardware :
+  - La pin RX reçoit les données de l'entrée A (via optoisolateur)
+  - La pin TX émet les données vers la sortie 5
+  - Ces deux pins et leurs buffers sont électriquement et logiciellement
+    indépendants dans le silicium
+
+Quand handleNoteOn route A→5, il appelle :
+  - MIDIA_5.read()       → lit le buffer RX de Serial2 (ce qui arrive)
+  - MIDI5.sendNoteOn()   → écrit dans le buffer TX de Serial2 (ce qui part)
+  Ces deux opérations n'interfèrent pas.
+
+Le seul effet réel de ce partage est une contrainte matérielle : le Teensy
+n'ayant pas d'UART supplémentaire, OUT 5 et OUT 6 ne peuvent pas être des
+entrées indépendantes — ils sont fixés comme sorties. Ce n'est pas une
+limitation de routage mais une limitation de ressources hardware.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. LOGIQUE ET TIMING DE LA BOUCLE PRINCIPALE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+La loop() est un polling pur, sans RTOS, sans delay(). Elle s'exécute aussi
+vite que possible sur le Teensy 4.1 @ 600 MHz.
+
+─── 2.1  Déroulement séquentiel avec estimations de durée ───────────────────
+
+  Étape                         Durée estimée
+  ────────────────────────────────────────────────────────────────────────
+  ota_tick()                    ~1-5 µs (idle) / bloquant pendant OTA
+  Gestion logo / BACK           ~0.5 µs
+  ui_tick() max 1×/50 ms        ~20 ms si sendBuffer OLED / ~1 µs si skip
+  MIDIA.read()                  ~0.5-2 µs (+2-5 µs si message : callback)
+  MIDIB.read()                  ~0.5-2 µs
+  myusb.Task() 1er appel        ~5-50 µs  (transferts USB Host → buffers)
+  MIDIUSBx.read() × 6           ~1-3 µs × 6
+  hc_poll()                     ~1 µs    (détection hot-plug USB Host)
+  myusb.Task() 2ème appel       ~5-50 µs  (évite gap > bInterval hub ~8 ms)
+  MIDIUSBx.read() × 6           ~1-3 µs × 6
+  sd_tick()                     ~0.5 µs idle / 1-3 ms si write / pic 5-10 ms
+  MTP.loop()                    ~1-10 ms variable si accès PC
+  while usbMIDI.read()          ~1-5 µs par message PC → inject sorties
+  ────────────────────────────────────────────────────────────────────────
+
+  Durée typique sans MIDI actif : ~100–300 µs / itération
+  Fréquence nominale de boucle  : ~3 000–10 000 itérations/seconde
+  Avec MIDI dense + SD write    : peut monter à ~3–15 ms / itération
+
+Raison du double appel myusb.Task() : le hub USB a un bInterval de ~8 ms.
+Si le gap entre deux Task() dépasse cette valeur, le hub manque ses interrupts
+de port. sd_tick() pouvant durer 1-3 ms, le second appel avant sd_tick()
+garantit que le hub est servi dans les temps.
+
+
+─── 2.2  Interruptions ───────────────────────────────────────────────────────
+
+Il n'y a AUCUNE interruption applicative explicite dans le code (pas de
+attachInterrupt(), pas d'ISR manuelle). Cependant, plusieurs mécanismes
+tournent en interruption sous le capot de Teensyduino :
+
+  UART RX (Serial1–8)
+    Les octets MIDI arrivants sont reçus en ISR hardware et placés dans les
+    buffers de 1 024 octets (agrandis via addMemoryForRead). Le MIDI.read()
+    dépile ce buffer en tâche de fond. Capacité : ~330 ms de MIDI dense.
+
+  USB Device (usbMIDI)
+    Géré par les interruptions USB internes du Teensy. Transparent.
+
+  USB Host (myusb.Task())
+    N'EST PAS une interruption — c'est un polling coopératif. C'est pourquoi
+    il est appelé deux fois par boucle (voir § 2.1).
+
+  Encodeur rotatif (Encoder library)
+    Utilise des interruptions GPIO sur les pins 39/40 pour ne rater aucun
+    cran, quelle que soit la durée de la boucle principale.
+
+  Bouton SELECT (Bounce2 library)
+    Polling dans ui_tick(), avec debounce logiciel de 150 ms.
+
+
+─── 2.3  Latence MIDI effective ─────────────────────────────────────────────
+
+Sur le chemin critique (ISR UART → callback → MIDI.sendX()), la latence entre
+réception d'un octet MIDI et émission vers la sortie est de l'ordre de
+quelques dizaines de microsecondes — bien en dessous du seuil de perception
+humain (~1 ms).
+
+Pendant un sd_tick() à 3 ms, environ 9 octets MIDI arrivent sur chaque UART
+(31 250 bauds = 3 125 octets/s). Le buffer RX de 1 024 octets absorbe ~330 ms
+d'arrivée avant débordement — aucune perte dans ce cas.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. PARTAGE DU TEMPS : OLED ET CARTE SD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+─── 3.1  OLED SSD1306 (128×64, I2C 400 kHz) ────────────────────────────────
+
+Un sendBuffer() — envoi du framebuffer complet 128×64 en I2C à 400 kHz —
+prend environ 20 ms. C'est le plus grand consommateur de temps dans la boucle.
+L'oscillateur SSD1306 est mis au maximum (0xF0) pour optimiser les temps.
+
+Protection : rafraîchissement conditionnel à deux niveaux.
+
+  Niveau 1 : ui_tick() n'est appelé que toutes les 50 ms
+    (gardien : if millis()-lastUI > 50 dans loop())
+
+  Niveau 2 : à l'intérieur de ui_tick(), le dessin n'est effectué que si
+    nécessaire (flag need_anim, interaction utilisateur, ou entrée de menu).
+    Sinon : return immédiat — aucun appel I2C.
+
+  Conséquences pratiques :
+    Mode logo/idle          : 0 dessin, OLED ne consomme rien du tout
+    Menu sans interaction   : 0 dessin sauf animation en cours
+    Mode MONITOR (VU-mètre) : redessin chaque 50 ms (~20 ms / 50 ms = 40% CPU)
+    Interaction humaine     : 1 dessin ~20 ms, imperceptible
+
+
+─── 3.2  Carte SD — Architecture ring buffer asynchrone ─────────────────────
+
+Le SD recorder utilise une architecture ring buffer qui garantit que le flux
+MIDI n'est JAMAIS bloqué par les écritures disque.
+
+  rec_push()   — appelée dans _midi.h à chaque événement routé
+    Durée : ~50 ns
+    Action : copie 10 octets dans le ring buffer RAM. Ne bloque jamais.
+    Structure d'un événement (10 octets) :
+      [0-3]  timestamp micros() uint32_t little-endian
+      [4]    sortie (1-9)
+      [5]    source (0=PC/DAW, 1=A, 2=B, 3=C, 4=D, 5=E)
+      [6]    type MIDI (0x90=NoteOn, 0x80=NoteOff, 0xB0=CC…)
+      [7]    canal destination (1-16)
+      [8]    data1 (note / numéro CC…)
+      [9]    data2 (vélocité / valeur CC… / 0 si absent)
+
+  sd_tick()    — appelée dans loop() à chaque itération
+    Durée : ~0.5 µs si idle / 1-3 ms si write / pics jusqu'à 5-10 ms
+    Action : écrit sur SD si >= 280 octets disponibles (28 événements)
+    Batch max : 56 événements (504 octets) par appel pour plafonner la latence
+    Sync : flush tous les ~4 Ko (pas à chaque write) pour limiter les délais
+
+  Paramètres du ring buffer :
+    Taille            : 4 096 octets (puissance de 2 → masquage binaire)
+    Seuil d'écriture  : 280 octets (28 événements)
+    Batch maximum     : 504 octets (56 événements)
+    Préallocation SD  : 20 Mo au démarrage (~30h de MIDI dense)
+      → évite la fragmentation et les délais FAT pendant la session
+
+  Métriques exposées dans le menu Monitor :
+    sd_max_us        : durée max d'un appel write() en µs (historique session)
+    sd_spike_count   : nombre de writes ayant dépassé 3 000 µs
+
+  MTP.loop() : accès aux fichiers REC*.DAT depuis le PC via USB (disque USB).
+    Placé APRÈS sd_tick() pour donner priorité aux écritures MIDI.
+    Peut bloquer plusieurs ms si le PC lit activement un fichier.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. 6 ENTRÉES + 9 SORTIES EN SIMULTANÉ — FAISABILITÉ
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Configuration maximale : 3 TRS IN (A, B + OUT5/6 reconfigurés non applicable)
+                         + 3 USB Host IN (C, D, E)
+                         = 5 entrées MIDI indépendantes (A, B, C, D, E)
+                       : 6 TRS OUT (1, 2, 3, 4, 5, 6)
+                         + 3 USB Host OUT (7, 8, 9)
+                         = 9 sorties MIDI indépendantes
+
+─── 4.1  Ce qui tourne vraiment en parallèle ────────────────────────────────
+
+  UARTs TX : matériellement indépendants
+    Quand MIDI1.sendNoteOn() écrit sur Serial8 et MIDI2.sendNoteOn() écrit
+    sur Serial3, ces deux transmissions se font physiquement en même temps
+    dans le silicium. Le CPU ne fait que remplir les buffers TX et passer à
+    la suite. Les 6 ports TRS émettent donc en parallèle.
+
+  UARTs RX : interruptions indépendantes
+    Chaque port RX a sa propre ISR et son propre buffer de 1 024 octets.
+    Les données arrivent en parallèle sur tous les ports.
+
+  USB Host : contrôleur EHCI hardware
+    Le contrôleur EHCI du Teensy 4.1 gère les transactions USB en hardware.
+    myusb.Task() ne fait que drainer les buffers déjà remplis.
+
+  USB Device (usbMIDI) : géré en interruption, indépendant du polling.
+
+
+─── 4.2  Le vrai goulot : la bande passante MIDI TRS ────────────────────────
+
+MIDI = 31 250 baud = ~3 125 octets/s = ~1 000 messages 3 octets/s par port.
+C'est la limite physique du protocole, indépendante du Teensy.
+
+  Scénario          Entrées→Sortie 1  Charge sortie 1  Résultat
+  ───────────────────────────────────────────────────────────────────────
+  Diagonal (A→1…)   1 seule entrée   ~100%             OK
+  Merge 2→1         A + B            ~200%             Saturation si plein régime
+  Live réaliste     6 entrées        6×50=300 msg/s    OK (~30% capacité)
+  Stress test       6 entrées max    ~600%             Saturation certaine
+  ───────────────────────────────────────────────────────────────────────
+
+  Note : les sorties USB Host 7/8/9 ne sont pas concernées par ce goulot.
+  USB Full Speed = 12 Mbps → ~40 000 messages MIDI/s. Pas de limite pratique.
+
+
+─── 4.3  Comportement en cas de saturation d'une sortie TRS ─────────────────
+
+Si une sortie TRS est saturée, MIDI.sendNoteOn() ne PERD PAS l'événement
+mais BLOQUE jusqu'à ce qu'il y ait de la place dans le buffer TX (64 octets
+par défaut = ~20 ms de MIDI).
+
+Ce blocage stalle loop(), ce qui retarde la lecture des autres entrées.
+Mais les buffers RX de 1 024 octets absorbent ~330 ms d'arrivée :
+  → pas de perte de données, juste un retard temporaire.
+
+
+─── 4.4  Synthèse des marges ─────────────────────────────────────────────────
+
+  Ressource          Limite          Usage live typique   Marge
+  ───────────────────────────────────────────────────────────────────────
+  CPU (600 MHz)      ~millions msg/s quelques milliers/s  immense
+  USB Host           ~40 000 msg/s   centaines/s          très large
+  TRS IN (buffer)    ~1 000 msg/s    ~100-200/s           large
+  TRS OUT (1 port)   ~1 000 msg/s    ~100-200/s (1:1)     confortable
+  Merge N→1 TRS OUT  1 000 msg/s     N × flux entrée      risque si N > 3-4
+                     partagés entre                        à plein régime
+                     N sources
+  ───────────────────────────────────────────────────────────────────────
+
+CONCLUSION : 6 entrées + 9 sorties en simultané fonctionne sans problème
+pour un usage musical normal. La seule limite réelle est physique (débit
+MIDI 31 250 baud sur les sorties TRS), pas le Teensy. Un merge de plusieurs
+entrées très actives vers la même sortie TRS peut provoquer un retard de
+quelques ms, sans perte de données (grâce aux buffers RX de 1 Ko).
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. SCHÉMA RÉCAPITULATIF DE LA BOUCLE PRINCIPALE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
++--------------------------------------------------------------+
+|           BOUCLE PRINCIPALE  (polling pur, sans RTOS)        |
+|    ~100 µs/iter idle          ~3-15 ms/iter avec SD+OLED     |
+|                                                              |
+|  TRS IN A/B    ISR UART -> buffer 1 Ko                       |
+|  ----------->  MIDIA/B.read() polling       ~2 µs            |
+|                callback -> route_matrix[in][ch][out]         |
+|                   -> send TRS physique + USB miroir          |
+|                      -> rec_push()  ~50 ns  (ring buf RAM)   |
+|                                                              |
+|  USB HOST C/D/E  myusb.Task() × 2 / boucle (avant+après SD) |
+|  ------------>   MIDIUSBx.read() × 6                        |
+|                  callback -> même pipeline que TRS           |
+|                                                              |
+|  USB PC (DAW)  usbMIDI.read() while loop                     |
+|  ----------->  dispatch par câble USB (0-14)                 |
+|                -> inject direct vers sorties physiques       |
+|                                                              |
+|  SD Recorder   sd_tick()  ~1-3 ms si 28+ events             |
+|  ring 4 Ko ->  56 events × 10 B par écriture batch          |
+|                sync() tous les ~4 Ko (pas à chaque write)    |
+|                                                              |
+|  OLED SSD1306  ui_tick() toutes les 50 ms                    |
+|  I2C 400 kHz   sendBuffer() ~20 ms si interaction/animation  |
+|                skip complet si pas d'interaction (0 I2C)     |
++--------------------------------------------------------------+
+
+  UARTs hardware (TX) : 6 ports TRS émettent EN PARALLÈLE dans le silicium
+  UARTs hardware (RX) : 5 ports écoutent EN PARALLÈLE via ISR
+  USB Host EHCI       : transactions USB gérées EN PARALLÈLE par le contrôleur
+  CPU                 : séquentiel mais ~600 MHz, routing ~5 µs/message
+
+================================================================================
+  Fin des notes — miniMoc firmware v2.0.2
+================================================================================
