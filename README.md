@@ -22,6 +22,8 @@ et un encodeur pour tout piloter à la main.
 
 - **Le projet et l'appel aux compagnons** : https://www.youtube.com/watch?v=sc03914Uq1w
 - **Présentation du hardware** (ce que vous recevez, comment c'est fait) : https://youtu.be/FKErdNdDdWI
+- **La navigation dans les menus** : https://youtu.be/ahOwxcXlfOY
+- **Le smartmirror expliqué** : https://youtu.be/d6lrl4uF-Bw
 
 ---
 
