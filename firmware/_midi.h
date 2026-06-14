@@ -83,6 +83,7 @@ static inline MIDIDevice_BigBuffer* _usb_out_dev(uint8_t out_port_idx) {
 // SYNC — forward real-time depuis le port maître vers toutes les sorties
 // ----------------------------------------------------------------
 static inline void _sync_forward(byte msgType) {
+    if (msgType == (byte)midi::Clock) bpm_push_clock();
     midi::MidiType t = (midi::MidiType)msgType;
     MIDI1.sendRealTime(t); MIDI2.sendRealTime(t);
     MIDI3.sendRealTime(t); MIDI4.sendRealTime(t);

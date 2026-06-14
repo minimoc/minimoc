@@ -689,6 +689,31 @@
     .fw-step-label { font-size: 13px; font-weight: 600; color: #f9fafb; margin-bottom: 4px; }
     .fw-step-sub   { font-size: 12px; color: #6b7280; line-height: 1.5; }
     .fw-step-actions { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+
+    /* ── FIRMWARE SOURCE TABS ── */
+    .fw-source-tabs { display: flex; margin-bottom: 20px; }
+    .fw-source-tab {
+      flex: 1; padding: 9px 0; font-size: 13px; font-weight: 600;
+      border: 1px solid #374151; background: transparent; color: #9ca3af;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .fw-source-tab:first-child { border-radius: 8px 0 0 8px; }
+    .fw-source-tab:last-child  { border-radius: 0 8px 8px 0; border-left: none; }
+    .fw-source-tab.active { background: #10b981; border-color: #10b981; color: #fff; }
+
+    /* ── SERVER RELEASE LIST ── */
+    .fw-release-list { display: flex; flex-direction: column; gap: 8px; }
+    .fw-release-row {
+      display: flex; align-items: center; gap: 14px;
+      padding: 11px 16px; border-radius: 8px;
+      border: 1px solid #374151; background: #111827;
+      cursor: pointer; transition: border-color 0.12s, background 0.12s;
+    }
+    .fw-release-row:hover  { border-color: #6b7280; }
+    .fw-release-row.active { border-color: #10b981; background: #10b98110; }
+    .fw-release-ver  { font-weight: 700; font-size: 14px; color: #f9fafb; min-width: 72px; }
+    .fw-release-desc { flex: 1; font-size: 13px; color: #9ca3af; }
+    .fw-release-date { font-size: 12px; color: #6b7280; white-space: nowrap; }
   </style>
 </head>
 <body>
@@ -1210,15 +1235,61 @@ function encodeMidi(events, { bpm = 120, ppq = 960, splitBy = 'output' } = {}) {
 
 // ── Firmware Section ─────────────────────────────────────────────────────────
 function FirmwareSection({ send, connected, showToast }) {
-  const [phase,    setPhase]    = useState('idle');
-  // phases: idle → parsed → connecting → flashing → done | error
-  const [fileInfo, setFileInfo] = useState(null); // { name, sizeKB, binary }
-  const [progress, setProgress] = useState(0);
-  const [status,   setStatus]   = useState('');
-  const [err,      setErr]      = useState('');
+  const [phase,           setPhase]           = useState('idle');
+  const [fileInfo,        setFileInfo]        = useState(null);
+  const [progress,        setProgress]        = useState(0);
+  const [status,          setStatus]          = useState('');
+  const [err,             setErr]             = useState('');
+  const [sourceMode,      setSourceMode]      = useState('server');
+  const [serverList,      setServerList]      = useState(null);
+  const [serverError,     setServerError]     = useState('');
+  const [selectedRelease, setSelectedRelease] = useState(null);
+  const [fetchingHex,     setFetchingHex]     = useState(false);
   const fileRef = useRef(null);
 
   const serialOK = !!navigator.serial;
+
+  useEffect(() => { fetchReleases(); }, []);
+
+  async function fetchReleases() {
+    setServerList('loading');
+    setServerError('');
+    if (window.location.protocol === 'file:') {
+      setServerList('error');
+      setServerError("index.html est ouvert en file:// — les requêtes réseau sont bloquées par le navigateur. Servez le dossier via un serveur HTTP local (ex : npx serve weblink) ou utilisez l'onglet Fichier local.");
+      return;
+    }
+    try {
+      const resp = await fetch('./firmwares/releases.json');
+      if (!resp.ok) throw new Error(`HTTP ${resp.status} — ${resp.statusText} (./firmwares/releases.json)`);
+      const json = await resp.json();
+      setServerList(Array.isArray(json) ? json : []);
+    } catch(e) {
+      setServerList('error');
+      setServerError(e.message);
+    }
+  }
+
+  async function handleServerSelect(release) {
+    if (fetchingHex) return;
+    setSelectedRelease(release);
+    setErr('');
+    setFetchingHex(true);
+    try {
+      const resp = await fetch(`./firmwares/${release.filename}`);
+      if (!resp.ok) throw new Error(`Fichier introuvable (HTTP ${resp.status})`);
+      const text = await resp.text();
+      const parsed = parseIntelHex(text);
+      const binary = hexToBinary(parsed);
+      setFileInfo({ name: release.filename, sizeKB: (binary.length / 1024).toFixed(1), binary });
+      setPhase('parsed');
+    } catch(e) {
+      setErr(e.message);
+      setSelectedRelease(null);
+    } finally {
+      setFetchingHex(false);
+    }
+  }
 
   function loadFile(file) {
     if (!file) return;
@@ -1268,7 +1339,7 @@ function FirmwareSection({ send, connected, showToast }) {
   }
 
   function reset() {
-    setPhase('idle'); setFileInfo(null);
+    setPhase('idle'); setFileInfo(null); setSelectedRelease(null);
     setProgress(0); setStatus(''); setErr('');
   }
 
@@ -1285,42 +1356,129 @@ function FirmwareSection({ send, connected, showToast }) {
         </div>
       )}
 
-      {/* Sélection du fichier */}
-      <div className="panel">
-        <p className="panel-hint">
-          Compilez le sketch dans l'Arduino IDE (<strong>Croquis → Exporter le binaire compilé</strong>),
-          puis sélectionnez le fichier <code>.hex</code> généré.
-          Le miniMoc doit être branché via USB.
-        </p>
-        {phase === 'idle' ? (
-          <div
-            className="fw-zone"
-            onClick={() => fileRef.current?.click()}
-            onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('over'); }}
-            onDragLeave={e => e.currentTarget.classList.remove('over')}
-            onDrop={e => { e.preventDefault(); e.currentTarget.classList.remove('over'); loadFile(e.dataTransfer.files[0]); }}
+      {/* Onglets source — visibles uniquement en phase idle */}
+      {phase === 'idle' && (
+        <div className="fw-source-tabs">
+          <button
+            className={`fw-source-tab${sourceMode === 'server' ? ' active' : ''}`}
+            onClick={() => {
+              setSourceMode('server'); setErr('');
+              if (!Array.isArray(serverList) && serverList !== 'loading') fetchReleases();
+            }}
           >
-            <input ref={fileRef} type="file" accept=".hex" style={{ display:'none' }} onChange={e => loadFile(e.target.files[0])} />
-            <div className="fw-zone-icon">📂</div>
-            <div>Glissez un fichier <strong>.hex</strong> ici, ou cliquez pour sélectionner</div>
-          </div>
-        ) : (
+            🌐 Firmwares du serveur
+          </button>
+          <button
+            className={`fw-source-tab${sourceMode === 'local' ? ' active' : ''}`}
+            onClick={() => { setSourceMode('local'); setErr(''); }}
+          >
+            📂 Fichier local
+          </button>
+        </div>
+      )}
+
+      {/* Panel principal */}
+      <div className="panel">
+
+        {/* ── Mode serveur, phase idle ── */}
+        {phase === 'idle' && sourceMode === 'server' && (
+          <>
+            <p className="panel-hint">
+              Sélectionnez une version dans la liste. Le fichier est téléchargé depuis le serveur puis transféré via WebSerial.
+            </p>
+
+            {serverList === 'loading' && (
+              <div className="fw-status" style={{ padding: '8px 0' }}>⏳ Chargement de la liste…</div>
+            )}
+
+            {serverList === 'error' && (
+              <div className="warning-note" style={{ marginBottom: 12 }}>
+                Impossible de charger la liste des firmwares.
+                {serverError && (
+                  <div style={{ marginTop: 6, fontFamily: 'monospace', fontSize: 11, opacity: 0.85, wordBreak: 'break-word' }}>
+                    {serverError}
+                  </div>
+                )}
+                <br />
+                <button className="btn-sm" style={{ marginTop: 8 }} onClick={fetchReleases}>Réessayer</button>
+              </div>
+            )}
+
+            {Array.isArray(serverList) && serverList.length === 0 && (
+              <div className="fw-status" style={{ padding: '8px 0', color: '#6b7280' }}>
+                Aucun firmware disponible sur le serveur.
+              </div>
+            )}
+
+            {Array.isArray(serverList) && serverList.length > 0 && (
+              <div className="fw-release-list">
+                {serverList.map(rel => {
+                  const isSelected = selectedRelease?.filename === rel.filename;
+                  const isLoading  = isSelected && fetchingHex;
+                  return (
+                    <div
+                      key={rel.filename}
+                      className={`fw-release-row${isSelected ? ' active' : ''}`}
+                      onClick={() => handleServerSelect(rel)}
+                      style={{ opacity: fetchingHex && !isSelected ? 0.5 : 1,
+                               cursor: fetchingHex ? 'wait' : 'pointer' }}
+                    >
+                      <div className="fw-release-ver">{rel.version}</div>
+                      <div className="fw-release-desc">{rel.description || rel.filename}</div>
+                      <div className="fw-release-date">{rel.date}</div>
+                      {isLoading && <span style={{ fontSize: 13, color: '#60a5fa', flexShrink: 0 }}>⏳</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ── Mode local, phase idle ── */}
+        {phase === 'idle' && sourceMode === 'local' && (
+          <>
+            <p className="panel-hint">
+              Compilez le sketch dans l'Arduino IDE (<strong>Croquis → Exporter le binaire compilé</strong>),
+              puis sélectionnez le fichier <code>.hex</code> généré.
+              Le miniMoc doit être branché via USB.
+            </p>
+            <div
+              className="fw-zone"
+              onClick={() => fileRef.current?.click()}
+              onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('over'); }}
+              onDragLeave={e => e.currentTarget.classList.remove('over')}
+              onDrop={e => { e.preventDefault(); e.currentTarget.classList.remove('over'); loadFile(e.dataTransfer.files[0]); }}
+            >
+              <input ref={fileRef} type="file" accept=".hex" style={{ display:'none' }} onChange={e => loadFile(e.target.files[0])} />
+              <div className="fw-zone-icon">📂</div>
+              <div>Glissez un fichier <strong>.hex</strong> ici, ou cliquez pour sélectionner</div>
+            </div>
+          </>
+        )}
+
+        {/* ── Fichier sélectionné (phase ≠ idle) ── */}
+        {phase !== 'idle' && fileInfo && (
           <div className="fw-file-info">
             <span style={{ fontSize: 22 }}>💾</span>
             <div style={{ flex: 1 }}>
-              <div className="fw-info-name">{fileInfo?.name}</div>
-              <div className="fw-info-sub">{fileInfo?.sizeKB} KB — prêt pour le transfert WebSerial</div>
+              <div className="fw-info-name">{fileInfo.name}</div>
+              <div className="fw-info-sub">
+                {fileInfo.sizeKB} KB — prêt pour le transfert WebSerial
+                {selectedRelease && ` · ${selectedRelease.version}`}
+              </div>
             </div>
             {phase !== 'flashing' && phase !== 'connecting' && (
               <button className="btn" onClick={reset}>Changer</button>
             )}
           </div>
         )}
+
         {err && phase !== 'error' && <div className="warning-note" style={{ marginTop: 12 }}>{err}</div>}
       </div>
 
-      {/* Flash */}
-      {fileInfo && (
+      {/* Panel flash — visible une fois un fichier sélectionné */}
+      {fileInfo && phase !== 'idle' && (
         <div className="panel">
 
           {phase === 'parsed' && (

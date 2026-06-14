@@ -1,6 +1,6 @@
 # Mode d'emploi — miniMoc
 
-> Version 0.2 (firmware 2.0.2)
+> Version 0.2.1
 
 ---
 
@@ -224,6 +224,17 @@ Les messages Real-Time des autres entrées (non-maître) sont **ignorés** pour 
 
 > Réglez **OFF** si vous ne souhaitez pas propager de clock du tout.
 
+### Visualiser le BPM en temps réel
+
+Depuis le carousel, entrez dans **MONITOR** puis tournez l'encodeur vers la droite pour passer à l'écran **BPM**.
+
+- La source maître est rappelée en haut de l'écran (A / B / C / D / E / OFF).
+- Le BPM du maître est affiché en grands chiffres, arrondi à l'entier le plus proche.
+- Si aucun signal n'est reçu depuis plus de 2 secondes, l'écran affiche **NO CLOCK**.
+- Tournez l'encodeur vers la gauche pour revenir à l'écran VU-mètre.
+
+> **Important** : l'écran MONITOR se rafraîchit en permanence (chaque rafraîchissement de l'affichage OLED bloque le bus I²C ~20 ms). Pour éviter tout jitter sur les sorties MIDI à forte densité de données, **revenez à l'écran d'accueil (la feuille du carousel) dès que vous n'avez plus besoin du moniteur**.
+
 ---
 
 ## 9. Gestion des presets
@@ -370,14 +381,14 @@ Ouvrez le fichier `weblink/index.html` depuis votre navigateur, ou accédez à l
 
 ### Via l'éditeur web (recommandé)
 
-1. Compilez le nouveau firmware dans Arduino IDE : **Croquis → Exporter le binaire compilé**
-2. Récupérez le fichier `.hex` dans le dossier du projet
-3. Dans l'éditeur web, onglet **FIRMWARE** :
-   - Cliquez **Sélectionner fichier**, choisissez le `.hex`
-   - Vérifiez la taille et le CRC32 affichés
-   - Cliquez **Flasher**
-   - Attendez la barre de progression et le message de confirmation
-4. Le miniMoc redémarre automatiquement
+1. Dans l'éditeur web, onglet **FIRMWARE**
+2. Choisissez la source du fichier :
+   - **Firmwares du serveur** *(onglet par défaut)* : sélectionnez une version dans la liste — le fichier `.hex` est téléchargé automatiquement depuis le serveur
+   - **Fichier local** : compilez d'abord dans l'Arduino IDE (**Croquis → Exporter le binaire compilé**), puis glissez le `.hex` dans la zone ou cliquez pour le sélectionner
+3. Une fois le fichier chargé, cliquez **⬆ Mettre à jour le firmware**
+4. Sélectionnez le port série du miniMoc dans le sélecteur du navigateur
+5. Attendez la barre de progression et le message de confirmation
+6. Le miniMoc redémarre automatiquement
 
 ### Première installation (Arduino IDE)
 
@@ -419,7 +430,8 @@ CAROUSEL PRINCIPAL
 │   └── Sélectionner la source maître (A / B / C / D / E / OFF)
 │
 ├── MONITOR
-│   └── VU-mètres temps réel (5 entrées + 9 sorties)
+│   ├── Page 1 — VU-mètres temps réel (5 entrées + 9 sorties)
+│   └── Page 2 — BPM du maître SYNC en grand (tournez l'encodeur pour naviguer)
 │
 └── SYSTEME
     ├── INFO          ← numéro preset, stats SD, noms appareils USB

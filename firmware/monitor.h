@@ -124,3 +124,52 @@ void mon_draw() {
 
     u8g2.sendBuffer();
 }
+
+// ----------------------------------------------------------------
+// BPM tracking — comptage fréquentiel sur fenêtre glissante 2 s
+// ----------------------------------------------------------------
+// On compte le nombre de ticks MIDI Clock reçus dans les 2 dernières
+// secondes. Aucun rejet : les ticks lus en double (double MIDIUSB.read()
+// par itération) sont simplement comptés, ce qui est correct.
+// BPM = count × 60 / (24 × 2)  →  BPM = count × 1.25
+//
+// Buffer circulaire de timestamps (ms) pour la fenêtre glissante.
+// À 300 BPM : 120 ticks/s × 2 s = 240 ticks max → 256 suffisent.
+#define BPM_BUF_SIZE   256u
+#define BPM_WINDOW_MS  2000u
+#define BPM_TIMEOUT_MS 2000u
+
+static uint32_t bpm_ts_ms[BPM_BUF_SIZE] = {0};
+static uint16_t bpm_buf_head  = 0;
+static uint16_t bpm_buf_count = 0;
+static float    bpm_value     = 0.0f;
+static uint32_t bpm_last_ms   = 0;
+
+inline void bpm_push_clock() {
+    uint32_t now_ms = millis();
+    bpm_last_ms = now_ms;
+
+    bpm_ts_ms[bpm_buf_head] = now_ms;
+    bpm_buf_head = (bpm_buf_head + 1) % BPM_BUF_SIZE;
+    if (bpm_buf_count < BPM_BUF_SIZE) bpm_buf_count++;
+}
+
+// Appelé depuis mon_draw_bpm() à chaque rafraîchissement (~50 ms)
+static void bpm_compute() {
+    if (bpm_buf_count == 0) return;
+    uint32_t now_ms = millis();
+    uint32_t cutoff = now_ms - BPM_WINDOW_MS;
+
+    // Compter les ticks dans la fenêtre (en partant du plus récent)
+    uint16_t count = 0;
+    for (uint16_t i = 0; i < bpm_buf_count; i++) {
+        uint16_t idx = (bpm_buf_head + BPM_BUF_SIZE - 1 - i) % BPM_BUF_SIZE;
+        if (bpm_ts_ms[idx] <= cutoff) break;
+        count++;
+    }
+
+    if (count >= 24u) {   // au moins 1 temps complet
+        float raw = (float)count * (60000.0f / (24.0f * BPM_WINDOW_MS));
+        bpm_value = (bpm_value < 1.0f) ? raw : 0.8f * bpm_value + 0.2f * raw;
+    }
+}

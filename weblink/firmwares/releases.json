@@ -1,0 +1,14 @@
+[
+  {
+    "version": "v0.2.0",
+    "filename": "minimoc_v0.2.0_tbc.hex",
+    "date": "2026-06-12",
+    "description": "Version 0.2.0 (à confirmer)"
+  },
+  {
+    "version": "v0.2.1",
+    "filename": "minimoc_v0.2.1.hex",
+    "date": "2026-06-12",
+    "description": "Ajout BPM monitor, stabilisation OTA"
+  }
+]

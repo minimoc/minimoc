@@ -1,4 +1,4 @@
-#define FIRMWARE_VERSION "v0.2.0"
+#define FIRMWARE_VERSION "v0.2.1"
 
 #define MIDIA MIDIA_5
 #define MIDI5 MIDIA_5
