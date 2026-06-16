@@ -1,14 +1,20 @@
 [
   {
     "version": "v0.2.0",
-    "filename": "minimoc_v0.2.0_tbc.hex",
-    "date": "2026-06-12",
-    "description": "Version 0.2.0 (à confirmer)"
+    "filename": "minimoc_v0.2.0.hex",
+    "date": "2026-06-07",
+    "description": "Version 0.2.0"
   },
   {
     "version": "v0.2.1",
     "filename": "minimoc_v0.2.1.hex",
     "date": "2026-06-12",
     "description": "Ajout BPM monitor, stabilisation OTA"
+  },
+  {
+    "version": "v0.2.2",
+    "filename": "minimoc_v0.2.2.hex",
+    "date": "2026-06-14",
+    "description": "Ajout du sync depuis le smartMirror"
   }
 ]

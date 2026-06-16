@@ -1,4 +1,4 @@
-#define FIRMWARE_VERSION "v0.2.1"
+#define FIRMWARE_VERSION "v0.2.2"
 
 #define MIDIA MIDIA_5
 #define MIDI5 MIDIA_5
@@ -341,6 +341,9 @@ int buttonState = digitalRead(PIN_BACK);
         case midi::ProgramChange:     handleProgramChange(1, ch, d1, SRC_PC); break;
         case midi::PitchBend:         processPitchBend(0, ch, (int)(((int)d2 << 7) | d1) - 8192, SRC_PC); break;
         case midi::AfterTouchChannel: processAfterTouch(0, ch, d1, SRC_PC); break;
+        case midi::Clock: case midi::Start: case midi::Stop:
+        case midi::Continue: case midi::ActiveSensing: case midi::SystemReset:
+          if (sync_master == 0) _sync_forward(type); break;
       }
     } else if (cable == USB_PORT_B) {            // câble 2 — Entrée B
       switch (type) {
@@ -350,6 +353,9 @@ int buttonState = digitalRead(PIN_BACK);
         case midi::ProgramChange:     handleProgramChange(2, ch, d1, SRC_PC); break;
         case midi::PitchBend:         processPitchBend(1, ch, (int)(((int)d2 << 7) | d1) - 8192, SRC_PC); break;
         case midi::AfterTouchChannel: processAfterTouch(1, ch, d1, SRC_PC); break;
+        case midi::Clock: case midi::Start: case midi::Stop:
+        case midi::Continue: case midi::ActiveSensing: case midi::SystemReset:
+          if (sync_master == 1) _sync_forward(type); break;
       }
     } else if (cable == USB_IN_C) {               // câble 3 — Entrée C
       switch (type) {
@@ -359,6 +365,9 @@ int buttonState = digitalRead(PIN_BACK);
         case midi::ProgramChange:     handleProgramChange(3, ch, d1, SRC_PC); break;
         case midi::PitchBend:         processPitchBend(2, ch, (int)(((int)d2 << 7) | d1) - 8192, SRC_PC); break;
         case midi::AfterTouchChannel: processAfterTouch(2, ch, d1, SRC_PC); break;
+        case midi::Clock: case midi::Start: case midi::Stop:
+        case midi::Continue: case midi::ActiveSensing: case midi::SystemReset:
+          if (sync_master == 2) _sync_forward(type); break;
       }
     } else if (cable == USB_IN_D) {               // câble 4 — Entrée D
       switch (type) {
@@ -368,6 +377,9 @@ int buttonState = digitalRead(PIN_BACK);
         case midi::ProgramChange:     handleProgramChange(4, ch, d1, SRC_PC); break;
         case midi::PitchBend:         processPitchBend(3, ch, (int)(((int)d2 << 7) | d1) - 8192, SRC_PC); break;
         case midi::AfterTouchChannel: processAfterTouch(3, ch, d1, SRC_PC); break;
+        case midi::Clock: case midi::Start: case midi::Stop:
+        case midi::Continue: case midi::ActiveSensing: case midi::SystemReset:
+          if (sync_master == 3) _sync_forward(type); break;
       }
     } else if (cable >= USB_OUT_1 && cable <= USB_OUT_6) {  // câbles 6-11 — Sorties physiques 1-6
       switch (cable - (USB_OUT_1 - 1)) {
@@ -404,6 +416,9 @@ int buttonState = digitalRead(PIN_BACK);
         case midi::ProgramChange:     handleProgramChange(5, ch, d1, SRC_PC); break;
         case midi::PitchBend:         processPitchBend(4, ch, (int)(((int)d2 << 7) | d1) - 8192, SRC_PC); break;
         case midi::AfterTouchChannel: processAfterTouch(4, ch, d1, SRC_PC); break;
+        case midi::Clock: case midi::Start: case midi::Stop:
+        case midi::Continue: case midi::ActiveSensing: case midi::SystemReset:
+          if (sync_master == 4) _sync_forward(type); break;
       }
     } else if (cable == USB_OUT_9) {              // câble 14 — Sortie 9 direct
       { MIDIDevice_BigBuffer* _d = _usb_out_dev(2); if (_d && (bool)*_d) switch (type) {
