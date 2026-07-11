@@ -43,11 +43,19 @@ void mon_draw_bpm() {
 bool mon_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) {
     if (btn_back) return true;   // retour au carousel
 
-    if (enc_down && mon_page < 1) mon_page++;
-    if (enc_up   && mon_page > 0) mon_page--;
+    bool page_changed = false;
+    if (enc_down && mon_page < 1) { mon_page++; page_changed = true; }
+    if (enc_up   && mon_page > 0) { mon_page--; page_changed = true; }
 
-    if (mon_page == 1) mon_draw_bpm();
-    else               mon_draw();
+    // Throttle : redessiner au max toutes les 300ms pour réduire le blocage I2C (~8ms/sendBuffer à 1MHz).
+    // Un changement de page force un redraw immédiat.
+    static uint32_t mon_last_draw_ms = 0;
+    uint32_t now = millis();
+    if (page_changed || (now - mon_last_draw_ms >= 1000)) {
+        mon_last_draw_ms = now;
+        if (mon_page == 1) mon_draw_bpm();
+        else               mon_draw();
+    }
 
     return false;
 }

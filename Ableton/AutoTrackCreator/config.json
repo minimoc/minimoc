@@ -1,0 +1,7 @@
+{
+  "track_name": "Auto-MIDI",
+  "midi_input": "MIDIIN2 (MINIMOC)",
+  "midi_input_channel": "All Channels",
+  "midi_output": "MIDIOUT2 (MINIMOC)",
+  "midi_output_channel": ""
+}

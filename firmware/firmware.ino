@@ -1,4 +1,8 @@
-#define FIRMWARE_VERSION "v0.2.2"
+#define FIRMWARE_VERSION "v0.2.2b"
+
+// Décommenter pour activer l'enregistrement MIDI en tâche de fond sur carte SD.
+// Désactivé : sd_tick() et MTP ne tournent pas → latence réduite, sync plus stable.
+#define SD_RECORDER_ENABLED
 
 #define MIDIA MIDIA_5
 #define MIDI5 MIDIA_5
@@ -29,7 +33,9 @@ void traceLED() {
 #include "sd_presets.h"    // sd_preset_save/load/exists, SD_PRESET_MAX
 #include "sd_mtp_adapter.h"
 
+#ifdef SD_RECORDER_ENABLED
 SdFsAdapter sd_mtp_fs;
+#endif
 
 #include "preset.h"        // silent_save/load_preset — après sd_presets
 #include "_midi.h"
@@ -166,7 +172,7 @@ Serial2.addMemoryForRead(new uint8_t[1024], 1024); // On passe de 64 à 1024 oct
   selectButton.interval(5);
   pinMode(PIN_BACK, INPUT_PULLUP);
   Wire.begin();
-  Wire.setClock(400000);   // 400 kHz : valeur sûre pour le SSD1306
+  Wire.setClock(1000000);  // 1 MHz (Fast-mode Plus) : réduit sendBuffer ~20ms→~8ms — revenir à 400000 si artefacts OLED
   u8g2.begin();
   u8g2.sendF("ca", 0xD5, 0xF0);   // oscillateur SSD1306 au max (défaut 0x80)
 
@@ -177,6 +183,7 @@ Serial2.addMemoryForRead(new uint8_t[1024], 1024); // On passe de 64 à 1024 oct
   carousel_register("MONITOR", icon_monitor_16,  icon_monitor_32,  NULL);
   carousel_register("SYSTEM",  icon_info_16,     icon_info_32,     NULL);
 
+#ifdef SD_RECORDER_ENABLED
   sd_setup();
   if (sd_ok) {
     sd_preset_init();
@@ -184,6 +191,7 @@ Serial2.addMemoryForRead(new uint8_t[1024], 1024); // On passe de 64 à 1024 oct
     MTP.addFilesystem(sd_mtp_fs, "MiniMoc SD");
   }
   MTP.begin();
+#endif
 
   hc_load();       // Restaure assignation USB Host + état LOCK depuis EEPROM
   sync_load();     // Restaure le maître SYNC depuis EEPROM
@@ -320,11 +328,11 @@ int buttonState = digitalRead(PIN_BACK);
   // usbMIDI.read() sans argument lit le prochain message quel que soit le câble.
   // usbMIDI.getCable() retourne ensuite le numéro de câble USB pour dispatcher.
   // Note: usbMIDI.read(n) filtre par canal MIDI (pas par câble) — ne pas utiliser pour ça.
+#ifdef SD_RECORDER_ENABLED
   sd_tick();
-
   // MTP : accès SD depuis le PC — après sd_tick() pour donner priorité aux écritures
-  // Garde : on s'abstient si le ring buffer dépasse 50% pour éviter la contention SD
   if (sd_ok) MTP.loop();
+#endif
 
   while (usbMIDI.read()) {
     byte cable = usbMIDI.getCable();

@@ -451,7 +451,7 @@
     "pinned_symbol_libs": []
   },
   "meta": {
-    "filename": "MIDISHIELD_v0.1.kicad_pro",
+    "filename": "MiniMoc_bottom.kicad_pro",
     "version": 3
   },
   "net_settings": {
@@ -490,7 +490,7 @@
       "plot": "gerber/",
       "pos_files": "",
       "specctra_dsn": "",
-      "step": "MIDISHIELD.stl",
+      "step": "MIDISHIELD.step",
       "svg": "",
       "vrml": ""
     },

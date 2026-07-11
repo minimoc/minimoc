@@ -16,5 +16,17 @@
     "filename": "minimoc_v0.2.2.hex",
     "date": "2026-06-14",
     "description": "Ajout du sync depuis le smartMirror"
+  },
+  {
+    "version": "v0.2.2a",
+    "filename": "minimoc_v0.2.2a.hex",
+    "date": "2026-06-17",
+    "description": "Essai de monitor optimisé"
+  },
+  {
+    "version": "v0.2.2b",
+    "filename": "minimoc_v0.2.2b.hex",
+    "date": "2026-06-30",
+    "description": "Monitor Optimsé ++"
   }
 ]
