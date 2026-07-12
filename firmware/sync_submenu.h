@@ -1,81 +1,70 @@
 #pragma once
 // sync_submenu.h — Sélection du maître SYNC
 //
-// Grille 2×3 de grandes cases :   [A]  [B]  [C]
-//                                  [D]  [E] [OFF]
+// Liste défilante : sources SYNC_LABELS (cf. logic.h) + OFF. Chaque lettre
+// A-E propose deux sources distinctes — TRS/USB Host physique d'un côté,
+// câble USB miroir venant du PC de l'autre (ex. le smartmirror) — pour éviter
+// qu'un maître "A" écoute les deux en même temps. MiniMoc peut aussi se
+// choisir lui-même comme horloge interne (tempo fixe).
 //
-// Sélection active = fond blanc (inversé)
-// Curseur (non sélectionné) = cadre blanc
+// La source active (sync_master) est marquée d'un "*" ; le curseur de
+// navigation (encart inversé) est indépendant tant que OK n'a pas été pressé.
 //
 // OFF = tous les real-time filtrés
-// A/B/C/D/E = ce port transmet Clock/Start/Stop/Continue vers toutes les sorties
 
-// ── Constantes ───────────────────────────────────────────────────
-#define SYNC_OPT_OFF   5
-#define SYNC_OPT_COUNT 6
+#define SYNC_OPT_COUNT (SYNC_SOURCE_COUNT + 1)   // sources + OFF
 
-static const char* SYNC_LABELS[] = {"A","B","C","D","E","OFF"};
-
-static uint8_t sync_cursor = 5;
+static uint8_t sync_cursor = SYNC_OPT_COUNT - 1;
+static uint8_t sync_scroll = 0;   // index du premier item visible dans la liste
 
 static uint8_t _sync_to_cursor() {
-    return (sync_master == 0xFF) ? SYNC_OPT_OFF : sync_master;
+    return (sync_master == 0xFF) ? (SYNC_OPT_COUNT - 1) : sync_master;
 }
 static uint8_t _cursor_to_sync() {
-    return (sync_cursor == SYNC_OPT_OFF) ? 0xFF : sync_cursor;
+    return (sync_cursor == SYNC_OPT_COUNT - 1) ? 0xFF : sync_cursor;
 }
 
-// ── Géométrie de la grille ────────────────────────────────────────
-// 3 colonnes × 2 lignes, sous un titre de 11px
-// Colonne : 42px large, 1px de gap → positions x = 0, 43, 86
-// Ligne : de y=12 à y=37 (26px) et y=38 à y=63 (26px)
-#define SY_COLS  3
-#define SY_X(c)  ((c) * 43)
-#define SY_Y(r)  (12 + (r) * 26)
-#define SY_W     42
-#define SY_H     26
+#define SY_ITEM0_Y 28
+#define SY_ROW_H   11
+#define SY_VISIBLE 4   // lignes visibles simultanément dans la liste
 
 // ── Rendu ─────────────────────────────────────────────────────────
 void sync_draw() {
     u8g2.clearBuffer();
+    u8g2.setFont(UI_FONT_TITLE);
+    u8g2.drawStr(0, 14, "SYNC");
+    u8g2.drawHLine(0, 18, SCREEN_W);
 
-    // Titre compact
-    u8g2.setFont(UI_FONT_SMALL);
-    u8g2.drawStr(0, 8, "SYNC  Maitre horloge:");
-    // pas de separator line : la grille commence juste en dessous
+    // Ajuste le défilement pour garder le curseur visible
+    if (sync_cursor < sync_scroll)                   sync_scroll = sync_cursor;
+    if (sync_cursor >= sync_scroll + SY_VISIBLE)     sync_scroll = sync_cursor - SY_VISIBLE + 1;
 
-    uint8_t active = _sync_to_cursor();
+    uint8_t active_idx = _sync_to_cursor();
 
-    for (uint8_t i = 0; i < SYNC_OPT_COUNT; i++) {
-        uint8_t col = i % SY_COLS;
-        uint8_t row = i / SY_COLS;
-        uint8_t x   = SY_X(col);
-        uint8_t y   = SY_Y(row);
+    u8g2.setFont(UI_FONT_BODY);
+    for (uint8_t vi = 0; vi < SY_VISIBLE; vi++) {
+        uint8_t i = sync_scroll + vi;
+        if (i >= SYNC_OPT_COUNT) break;
+        int y = SY_ITEM0_Y + vi * SY_ROW_H;
 
-        bool sel = (sync_cursor == i);
-        bool on  = (active == i);
-
-        if (on) {
-            u8g2.drawBox(x, y, SY_W, SY_H);
+        if (i == sync_cursor) {
+            u8g2.drawBox(0, y - 9, SCREEN_W, SY_ROW_H);
             u8g2.setDrawColor(0);
         }
-        if (sel && !on) {
-            u8g2.drawFrame(x, y, SY_W, SY_H);
-        }
-        if (sel && on) {
-            // curseur sur la case active : cadre noir à l'intérieur
-            u8g2.setDrawColor(0);
-            u8g2.drawFrame(x+1, y+1, SY_W-2, SY_H-2);
-        }
 
-        // Texte centré dans la case (grande police)
-        u8g2.setFont(u8g2_font_8x13_tf);
-        uint8_t tw = u8g2.getStrWidth(SYNC_LABELS[i]);
-        u8g2.drawStr(x + (SY_W - tw) / 2, y + SY_H - 4, SYNC_LABELS[i]);
+        const char* label = (i < SYNC_SOURCE_COUNT) ? SYNC_LABELS[i] : "OFF";
+        char buf[16];
+        if (i == active_idx) snprintf(buf, sizeof(buf), "%s *", label);
+        else                  snprintf(buf, sizeof(buf), "%s",  label);
+        u8g2.drawStr(4, y, buf);
 
-        u8g2.setFont(UI_FONT_SMALL);
         u8g2.setDrawColor(1);
     }
+
+    // Flèches de défilement
+    u8g2.setFont(UI_FONT_SMALL);
+    if (sync_scroll > 0)                             u8g2.drawStr(122, 25, "^");
+    if (sync_scroll + SY_VISIBLE < SYNC_OPT_COUNT)   u8g2.drawStr(122, 63, "v");
 
     u8g2.sendBuffer();
 }
@@ -88,6 +77,7 @@ bool sync_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back
     if (btn_valid) {
         sync_master = _cursor_to_sync();
         sync_save();
+        internal_clock_apply();   // démarre/arrête l'horloge interne selon le nouveau choix
     }
 
     sync_draw();
@@ -96,4 +86,5 @@ bool sync_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back
 
 void sync_enter() {
     sync_cursor = _sync_to_cursor();
+    sync_scroll = 0;
 }

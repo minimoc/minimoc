@@ -17,6 +17,15 @@ const int USB_OUT_7    = 12;   // Sortie 7  (USB Host 1)
 const int USB_OUT_8    = 13;   // Sortie 8  (USB Host 2)
 const int USB_OUT_9    = 14;   // Sortie 9  (USB Host 3)
 
+// Câbles miroir PC des 9 sorties (physiques 1-6 + USB Host 7-9) — utilisés
+// pour reproduire vers le smartmirror le Clock/Start/Stop du maître SYNC,
+// au même titre que les notes/CC/etc. (cf. _sync_forward() et
+// internal_clock_flush_usb()).
+static const uint8_t SYNC_MIRROR_CABLES[] = {
+    USB_OUT_1, USB_OUT_2, USB_OUT_3, USB_OUT_4, USB_OUT_5, USB_OUT_6,
+    USB_OUT_7, USB_OUT_8, USB_OUT_9
+};
+
 // Codes source enregistrement SD
 #define SRC_PC 0
 #define SRC_A  1
@@ -84,6 +93,7 @@ static inline MIDIDevice_BigBuffer* _usb_out_dev(uint8_t out_port_idx) {
 // ----------------------------------------------------------------
 static inline void _sync_forward(byte msgType) {
     if (msgType == (byte)midi::Clock) bpm_push_clock();
+    if (msgType == (byte)midi::Start || msgType == (byte)midi::Continue) bpm_reset_beat();
     midi::MidiType t = (midi::MidiType)msgType;
     MIDI1.sendRealTime(t); MIDI2.sendRealTime(t);
     MIDI3.sendRealTime(t); MIDI4.sendRealTime(t);
@@ -92,6 +102,92 @@ static inline void _sync_forward(byte msgType) {
         MIDIDevice_BigBuffer* d = _usb_out_dev(i);
         if (d && (bool)*d) d->sendRealTime(msgType);
     }
+    // Miroir PC (smartmirror) — même filet que les notes/CC/etc., sur les 9 câbles.
+    for (uint8_t i = 0; i < 9; i++) usbMIDI.sendRealTime(msgType, SYNC_MIRROR_CABLES[i]);
+}
+
+// ----------------------------------------------------------------
+// MMC (MIDI Machine Control) — F0 7F <device-id> 06 <commande> F7
+// device-id 0x7F = broadcast (tous les appareils). Utilisé par le menu
+// TRANSPORT pour piloter un enregistreur/DAW externe (STOP/RECORD/AVANCE/
+// REWIND) — protocole différent du Start/Stop temps réel utilisé par
+// _sync_forward() pour le Play/Pause. Appel occasionnel (sur pression de
+// bouton), jamais depuis l'ISR de l'horloge interne.
+// ----------------------------------------------------------------
+#define MMC_STOP          0x01
+#define MMC_PLAY          0x02
+#define MMC_FAST_FORWARD  0x04
+#define MMC_REWIND        0x05
+#define MMC_RECORD_STROBE 0x06
+
+inline void send_mmc(uint8_t command) {
+    uint8_t payload[4] = { 0x7F, 0x7F, 0x06, command };
+    MIDI1.sendSysEx(4, payload); MIDI2.sendSysEx(4, payload);
+    MIDI3.sendSysEx(4, payload); MIDI4.sendSysEx(4, payload);
+    MIDI5.sendSysEx(4, payload); MIDI6.sendSysEx(4, payload);
+    for (uint8_t i = 0; i < 3; i++) {
+        MIDIDevice_BigBuffer* d = _usb_out_dev(i);
+        if (d && (bool)*d) d->sendSysEx(4, payload);
+    }
+    for (uint8_t i = 0; i < 9; i++) usbMIDI.sendSysEx(4, payload, false, SYNC_MIRROR_CABLES[i]);
+}
+
+// ── Horloge interne — MiniMoc comme maître SYNC ───────────────────────────
+// Tempo réglable via le menu TRANSPORT (internal_clock_bpm, cf. logic.h).
+// Clock uniquement (pas de Start/Stop/Continue — un simple signal de tempo
+// suffit pour l'affichage BPM/LED des autres appareils).
+//
+// Générée depuis une interruption timer matérielle (IntervalTimer), pas depuis
+// loop() : loop() contient des appels bloquants (u8g2.sendBuffer() ~8ms,
+// sd_tick()/MTP.loop(), myusb.Task()) qui feraient dériver le tempo si le tick
+// dépendait d'être rappelé à temps.
+//
+// Sécurité ISR (vérifié dans les sources Teensyduino installées) :
+//  - MIDI1-6.sendRealTime() (HardwareSerial) est sûr à appeler depuis une ISR :
+//    si le buffer TX est plein, l'IRQ UART (priorité 64) préempte notre timer
+//    (priorité par défaut 128, donc moins prioritaire) pour le drainer — c'est
+//    le mécanisme prévu par le core Teensy pour ce cas précis.
+//  - MIDIDevice_BigBuffer::sendRealTime() (USB Host, sorties 7/8/9) NE L'EST
+//    PAS : write_packed() peut boucler un temps non borné en attendant qu'un
+//    timer USB Host séparé libère de la place. On ne l'appelle donc jamais
+//    depuis l'ISR — l'ISR pose juste un flag, loop() le vide en best-effort
+//    (comme avant, pas de régression sur ces 3 sorties précises).
+IntervalTimer internal_clock_timer;
+volatile bool  internal_clock_usb_pending = false;
+
+void internal_clock_isr() {
+    bpm_push_clock();
+    MIDI1.sendRealTime((byte)midi::Clock); MIDI2.sendRealTime((byte)midi::Clock);
+    MIDI3.sendRealTime((byte)midi::Clock); MIDI4.sendRealTime((byte)midi::Clock);
+    MIDI5.sendRealTime((byte)midi::Clock); MIDI6.sendRealTime((byte)midi::Clock);
+    internal_clock_usb_pending = true;
+}
+
+// Démarre/arrête le timer pour qu'il corresponde à sync_master courant.
+// À appeler après toute affectation de sync_master (et une fois au boot,
+// après sync_load(), pour le cas où MiniMoc était déjà le maître sauvegardé).
+inline void internal_clock_apply() {
+    if (sync_master == SYNC_MASTER_INTERNAL) {
+        uint32_t period_us = 60000000UL / (24UL * internal_clock_bpm);
+        internal_clock_timer.begin(internal_clock_isr, period_us);
+    } else {
+        internal_clock_timer.end();
+        internal_clock_usb_pending = false;
+    }
+}
+
+// Appelé en continu depuis loop() — vide vers les 3 sorties USB Host et le
+// miroir PC le flag posé par l'ISR (best-effort, ne bloque jamais l'ISR
+// elle-même). Le Clock est déjà parti sur MIDI1-6 et les devices USB Host
+// depuis l'ISR ; ceci n'ajoute que la copie miroir smartmirror sur les 9 câbles.
+inline void internal_clock_flush_usb() {
+    if (!internal_clock_usb_pending) return;
+    internal_clock_usb_pending = false;
+    for (uint8_t i = 0; i < 3; i++) {
+        MIDIDevice_BigBuffer* d = _usb_out_dev(i);
+        if (d && (bool)*d) d->sendRealTime((byte)midi::Clock);
+    }
+    for (uint8_t i = 0; i < 9; i++) usbMIDI.sendRealTime((byte)midi::Clock, SYNC_MIRROR_CABLES[i]);
 }
 
 // Callback real-time pour les devices USB Host (slots 0-5)

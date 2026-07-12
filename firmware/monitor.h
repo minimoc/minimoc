@@ -139,11 +139,23 @@ void mon_draw() {
 #define BPM_WINDOW_MS  2000u
 #define BPM_TIMEOUT_MS 2000u
 
+// Lissage adaptatif : au-delà de ce seuil (BPM), l'écart entre la mesure brute et
+// la valeur affichée est considéré comme un vrai changement de tempo (pas de la
+// gigue MIDI) → on saute dessus au lieu de lisser, pour ne pas ajouter le délai
+// de l'EMA par-dessus celui, déjà incompressible, de la fenêtre glissante.
+#define BPM_JUMP_THRESHOLD 5.0f
+
 static uint32_t bpm_ts_ms[BPM_BUF_SIZE] = {0};
 static uint16_t bpm_buf_head  = 0;
 static uint16_t bpm_buf_count = 0;
 static float    bpm_value     = 0.0f;
 static uint32_t bpm_last_ms   = 0;
+
+// ── LED embarquée — flash à chaque temps (1 temps = 24 ticks MIDI Clock) ──
+#define BPM_LED_BLINK_MS 100u   // durée du flash à chaque temps
+static uint8_t  bpm_beat_tick_ctr = 0;      // 0..23, compte les ticks depuis le dernier temps
+static bool     bpm_led_on        = false;
+static uint32_t bpm_led_on_ms     = 0;
 
 inline void bpm_push_clock() {
     uint32_t now_ms = millis();
@@ -152,9 +164,27 @@ inline void bpm_push_clock() {
     bpm_ts_ms[bpm_buf_head] = now_ms;
     bpm_buf_head = (bpm_buf_head + 1) % BPM_BUF_SIZE;
     if (bpm_buf_count < BPM_BUF_SIZE) bpm_buf_count++;
+
+    if (++bpm_beat_tick_ctr >= 24u) {   // un temps complet écoulé
+        bpm_beat_tick_ctr = 0;
+        digitalWrite(LED_BUILTIN, HIGH);
+        bpm_led_on    = true;
+        bpm_led_on_ms = now_ms;
+    }
 }
 
-// Appelé depuis mon_draw_bpm() à chaque rafraîchissement (~50 ms)
+// Réaligne le flash sur le prochain temps fort (appelé sur Start/Continue).
+inline void bpm_reset_beat() { bpm_beat_tick_ctr = 0; }
+
+// Éteint la LED après BPM_LED_BLINK_MS — à appeler à chaque loop() (non bloquant),
+// séparément de bpm_tick() pour garder une durée de flash précise.
+inline void bpm_led_tick() {
+    if (bpm_led_on && (millis() - bpm_led_on_ms >= BPM_LED_BLINK_MS)) {
+        digitalWrite(LED_BUILTIN, LOW);
+        bpm_led_on = false;
+    }
+}
+
 static void bpm_compute() {
     if (bpm_buf_count == 0) return;
     uint32_t now_ms = millis();
@@ -169,7 +199,28 @@ static void bpm_compute() {
     }
 
     if (count >= 24u) {   // au moins 1 temps complet
-        float raw = (float)count * (60000.0f / (24.0f * BPM_WINDOW_MS));
-        bpm_value = (bpm_value < 1.0f) ? raw : 0.8f * bpm_value + 0.2f * raw;
+        float raw  = (float)count * (60000.0f / (24.0f * BPM_WINDOW_MS));
+        float diff = raw - bpm_value;
+        if (diff < 0) diff = -diff;
+
+        if (bpm_value < 1.0f || diff > BPM_JUMP_THRESHOLD) {
+            // Premier calcul ou vrai changement de tempo : réponse immédiate.
+            bpm_value = raw;
+        } else {
+            // Petit écart = gigue MIDI normale : lissage pour la stabilité.
+            bpm_value = 0.8f * bpm_value + 0.2f * raw;
+        }
     }
+}
+
+#define BPM_COMPUTE_MS 100u   // période de calcul, indépendante du refresh écran
+
+// Appelé en continu depuis loop() — garde bpm_value à jour même hors de
+// l'écran MONITOR ou en mode BPM REFRESH lent/MANUEL.
+inline void bpm_tick() {
+    static uint32_t last_ms = 0;
+    uint32_t now = millis();
+    if (now - last_ms < BPM_COMPUTE_MS) return;
+    last_ms = now;
+    bpm_compute();
 }

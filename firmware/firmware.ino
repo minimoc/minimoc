@@ -1,4 +1,4 @@
-#define FIRMWARE_VERSION "v0.2.2b"
+#define FIRMWARE_VERSION "v0.3.0"
 
 // Décommenter pour activer l'enregistrement MIDI en tâche de fond sur carte SD.
 // Désactivé : sd_tick() et MTP ne tournent pas → latence réduite, sync plus stable.
@@ -51,6 +51,7 @@ SdFsAdapter sd_mtp_fs;
 #include "usb_host_config.h"   // après _midi.h (MIDIUSB1/2/3) et carousel_ui.h (UI_FONT_*)
 #include "sync_submenu.h"      // après usb_host_config.h (utilise hc_dev_name)
 #include "system_submenu.h"    // après info_submenu.h et usb_host_config.h
+#include "transport_submenu.h" // après logic.h (internal_clock_bpm) et carousel_ui.h (UI_FONT_*)
 #include "controls.h"   // must come after carousel_ui.h (uses u8g2)
 
 
@@ -170,18 +171,22 @@ Serial2.addMemoryForRead(new uint8_t[1024], 1024); // On passe de 64 à 1024 oct
   // Pins et OLED
   selectButton.attach(PIN_VALID, INPUT_PULLUP);
   selectButton.interval(5);
-  pinMode(PIN_BACK, INPUT_PULLUP);
+  backButton.attach(PIN_BACK, INPUT_PULLUP);
+  backButton.interval(5);
+  pinMode(LED_BUILTIN, OUTPUT);   // flash à chaque temps du maître SYNC (voir bpm_push_clock)
+  digitalWrite(LED_BUILTIN, LOW);
   Wire.begin();
   Wire.setClock(1000000);  // 1 MHz (Fast-mode Plus) : réduit sendBuffer ~20ms→~8ms — revenir à 400000 si artefacts OLED
   u8g2.begin();
   u8g2.sendF("ca", 0xD5, 0xF0);   // oscillateur SSD1306 au max (défaut 0x80)
 
-  // --- Carousel principal : PRESET / SYNC / ROUTAGE / MONITOR / SYSTEM ---
-  carousel_register("PRESET",  icon_preset_16,   icon_preset_32,   NULL);
-  carousel_register("SYNC",    icon_sync_16,     icon_sync_32,     NULL);
-  carousel_register("ROUTAGE", icon_routing_16,  icon_routing_32,  NULL);
-  carousel_register("MONITOR", icon_monitor_16,  icon_monitor_32,  NULL);
-  carousel_register("SYSTEM",  icon_info_16,     icon_info_32,     NULL);
+  // --- Carousel principal : PRESET / SYNC / ROUTAGE / MONITOR / SYSTEM / TRANSPORT ---
+  carousel_register("PRESET",    icon_preset_16,   icon_preset_32,   NULL);
+  carousel_register("SYNC",      icon_sync_16,     icon_sync_32,     NULL);
+  carousel_register("ROUTAGE",   icon_routing_16,  icon_routing_32,  NULL);
+  carousel_register("MONITOR",   icon_monitor_16,  icon_monitor_32,  NULL);
+  carousel_register("SYSTEM",    icon_info_16,     icon_info_32,     NULL);
+  carousel_register("TRANSPORT", icon_sync_16,     icon_sync_32,     NULL);  // icône réutilisée (horloge) — à remplacer si besoin
 
 #ifdef SD_RECORDER_ENABLED
   sd_setup();
@@ -196,6 +201,9 @@ Serial2.addMemoryForRead(new uint8_t[1024], 1024); // On passe de 64 à 1024 oct
   hc_load();       // Restaure assignation USB Host + état LOCK depuis EEPROM
   sync_load();     // Restaure le maître SYNC depuis EEPROM
   contrast_load(); contrast_apply(); // Restaure le contraste OLED depuis EEPROM
+  bpm_refresh_load();  // Restaure l'intervalle de rafraîchissement BPM depuis EEPROM
+  internal_clock_bpm_load();  // Restaure le tempo de l'horloge interne MiniMoc depuis EEPROM
+  internal_clock_apply();     // Démarre le timer si MiniMoc était déjà le maître SYNC sauvegardé
 
   // Chargement du dernier preset actif depuis la SD
   uint8_t stored_preset = 0;
@@ -220,7 +228,10 @@ Serial2.addMemoryForRead(new uint8_t[1024], 1024); // On passe de 64 à 1024 oct
 
 void loop() {
 
-  ota_tick();   // vérifie Serial sans bloquer ; bloque seulement pendant un transfert OTA actif
+  ota_tick();            // vérifie Serial sans bloquer ; bloque seulement pendant un transfert OTA actif
+  bpm_tick();            // recalcule bpm_value à période fixe, indépendamment de l'affichage
+  bpm_led_tick();        // éteint la LED de temps après BPM_LED_BLINK_MS (à chaque loop pour une durée précise)
+  internal_clock_flush_usb(); // relaie vers les sorties USB Host le Clock généré par l'ISR du timer
 
 int buttonState = digitalRead(PIN_BACK);
 
@@ -249,7 +260,9 @@ int buttonState = digitalRead(PIN_BACK);
   }
 
   // ── Appui long BACK → bascule vers le logo ────────────────────
-  if (buttonState == LOW) {
+  // Désactivé sur l'écran TRANSPORT : BACK y sert à chorder avec l'encodeur
+  // (RECORD/AVANCE/REWIND), ce qui dépasse facilement longPressDuration.
+  if (buttonState == LOW && ui_screen != UI_TRANSPORT) {
     if (buttonPressStartTime == 0) {
       buttonPressStartTime = millis();
     }
@@ -351,7 +364,7 @@ int buttonState = digitalRead(PIN_BACK);
         case midi::AfterTouchChannel: processAfterTouch(0, ch, d1, SRC_PC); break;
         case midi::Clock: case midi::Start: case midi::Stop:
         case midi::Continue: case midi::ActiveSensing: case midi::SystemReset:
-          if (sync_master == 0) _sync_forward(type); break;
+          if (sync_master == 5) _sync_forward(type); break;   // 5 = A (USB/PC)
       }
     } else if (cable == USB_PORT_B) {            // câble 2 — Entrée B
       switch (type) {
@@ -363,7 +376,7 @@ int buttonState = digitalRead(PIN_BACK);
         case midi::AfterTouchChannel: processAfterTouch(1, ch, d1, SRC_PC); break;
         case midi::Clock: case midi::Start: case midi::Stop:
         case midi::Continue: case midi::ActiveSensing: case midi::SystemReset:
-          if (sync_master == 1) _sync_forward(type); break;
+          if (sync_master == 6) _sync_forward(type); break;   // 6 = B (USB/PC)
       }
     } else if (cable == USB_IN_C) {               // câble 3 — Entrée C
       switch (type) {
@@ -375,7 +388,7 @@ int buttonState = digitalRead(PIN_BACK);
         case midi::AfterTouchChannel: processAfterTouch(2, ch, d1, SRC_PC); break;
         case midi::Clock: case midi::Start: case midi::Stop:
         case midi::Continue: case midi::ActiveSensing: case midi::SystemReset:
-          if (sync_master == 2) _sync_forward(type); break;
+          if (sync_master == 7) _sync_forward(type); break;   // 7 = C (USB/PC)
       }
     } else if (cable == USB_IN_D) {               // câble 4 — Entrée D
       switch (type) {
@@ -387,7 +400,7 @@ int buttonState = digitalRead(PIN_BACK);
         case midi::AfterTouchChannel: processAfterTouch(3, ch, d1, SRC_PC); break;
         case midi::Clock: case midi::Start: case midi::Stop:
         case midi::Continue: case midi::ActiveSensing: case midi::SystemReset:
-          if (sync_master == 3) _sync_forward(type); break;
+          if (sync_master == 8) _sync_forward(type); break;   // 8 = D (USB/PC)
       }
     } else if (cable >= USB_OUT_1 && cable <= USB_OUT_6) {  // câbles 6-11 — Sorties physiques 1-6
       switch (cable - (USB_OUT_1 - 1)) {
@@ -426,7 +439,7 @@ int buttonState = digitalRead(PIN_BACK);
         case midi::AfterTouchChannel: processAfterTouch(4, ch, d1, SRC_PC); break;
         case midi::Clock: case midi::Start: case midi::Stop:
         case midi::Continue: case midi::ActiveSensing: case midi::SystemReset:
-          if (sync_master == 4) _sync_forward(type); break;
+          if (sync_master == 9) _sync_forward(type); break;   // 9 = E (USB/PC)
       }
     } else if (cable == USB_OUT_9) {              // câble 14 — Sortie 9 direct
       { MIDIDevice_BigBuffer* _d = _usb_out_dev(2); if (_d && (bool)*_d) switch (type) {

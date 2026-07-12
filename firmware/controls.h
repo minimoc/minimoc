@@ -5,6 +5,7 @@
 // Encoder on pins 39/40, click button on 41, back button on 38
 Encoder myEnc(40, 39);
 Bounce  selectButton = Bounce();
+Bounce  backButton   = Bounce();
 long    oldPosition  = -999;
 
 unsigned long buttonPressStartTime = 0;
@@ -33,12 +34,13 @@ static uint32_t  enc_pending_ms = 0;
 // -----------------------------------------------------------------
 
 enum UIScreen {
-  UI_CAROUSEL,   // main carousel selector
-  UI_PRESETS,    // preset sub-menu
-  UI_SYNC,       // sync sub-menu
-  UI_ROUTING,    // routing sub-menu
-  UI_MONITOR,    // moniteur VU-mètre temps réel
-  UI_SYSTEM,     // system sub-menu (INFO + HOST CONFIG)
+  UI_CAROUSEL,     // main carousel selector
+  UI_PRESETS,      // preset sub-menu
+  UI_SYNC,         // sync sub-menu
+  UI_ROUTING,      // routing sub-menu
+  UI_MONITOR,      // moniteur VU-mètre temps réel
+  UI_SYSTEM,       // system sub-menu (INFO + HOST CONFIG)
+  UI_TRANSPORT,    // tempo de l'horloge interne MiniMoc (source MINIMOC du menu SYNC)
 };
 
 static UIScreen ui_screen = UI_CAROUSEL;
@@ -51,11 +53,13 @@ struct InputState {
   bool enc_up;
   bool enc_down;
   bool btn_valid;
-  bool btn_back;
+  bool btn_back;        // front (une seule fois par appui) — "remonter d'un niveau" pour la plupart des écrans
+  bool btn_held;        // état brut (debounced) du bouton VALID, indépendant du front de clic
+  bool btn_back_held;   // état continu (debounced) du bouton BACK — gestes chordés de l'écran TRANSPORT
 };
 
 static InputState read_inputs() {
-  InputState s = {false, false, false, false};
+  InputState s = {false, false, false, false, false, false};
 
   long newPos = myEnc.read();
   long diff   = newPos - oldPosition;
@@ -74,6 +78,7 @@ static InputState read_inputs() {
   selectButton.update();
   bool btn_fell = selectButton.fell();
   if (btn_fell) enc_pending = 0;
+  s.btn_held = (selectButton.read() == LOW);   // état continu (appui maintenu)
 
   // Appliquer la rotation différée si le délai est écoulé sans clic
   if (enc_pending != 0 && (now - enc_pending_ms) >= ENC_APPLY_MS) {
@@ -82,10 +87,22 @@ static InputState read_inputs() {
     enc_pending = 0;
   }
 
+  // Bouton BACK — deux signaux distincts, tous deux indépendants du minuteur
+  // ci-dessous (même raison que pour BTN_HELD : un appui maintenu ne doit pas
+  // rester "vrai" en continu pour les écrans qui ne veulent qu'un front).
+  //   btn_back      : front (une fois par appui) — "remonter d'un niveau"
+  //                   pour la quasi-totalité des écrans. Sans ça, un appui
+  //                   tenu ~150-300ms fait remonter plusieurs niveaux d'un
+  //                   coup (ui_tick tourne plusieurs fois pendant l'appui).
+  //   btn_back_held : état continu — gestes chordés de l'écran TRANSPORT
+  //                   (BACK tenu + encodeur).
+  backButton.update();
+  s.btn_back      = backButton.fell();
+  s.btn_back_held = (backButton.read() == LOW);
+
   if ((now - last_debounce_time) >= DEBOUNCE_DELAY_MS) {
-    if (btn_fell)  s.btn_valid = true;
-    s.btn_back = (digitalRead(PIN_BACK) == LOW);
-    if (s.btn_valid || s.btn_back) {
+    if (btn_fell) s.btn_valid = true;
+    if (s.btn_valid) {
       last_debounce_time = now;
     }
   }
@@ -109,8 +126,13 @@ void ui_tick() {
   // Ne redessiner que si nécessaire pour éviter de bloquer le MIDI sur l'I2C (~20ms/sendBuffer).
   // MONITOR : animation VU-mètre → refresh permanent.
   // CAROUSEL avec glissement en cours → refresh jusqu'à la fin de l'animation.
+  // TRANSPORT : doit tourner en continu, sinon le tick exact où BACK repasse à
+  // false (relâchement) peut tomber sur un has_io=false (rien d'autre actif ce
+  // tick-là) et être sauté par le filtre ci-dessous, ratant le front de
+  // relâchement (clic simple → STOP ou retour au menu selon l'état).
   // Autres écrans : seulement sur input utilisateur ou à l'entrée du sous-menu.
   bool need_anim = (ui_screen == UI_MONITOR)
+               || (ui_screen == UI_TRANSPORT)
                || (ui_screen == UI_CAROUSEL && carousel_anim_offset != 0);
 
   // Laisser tourner pendant un long press en cours dans le menu ROUTAGE
@@ -126,13 +148,14 @@ void ui_tick() {
     case UI_CAROUSEL: {
       bool validated = carousel_update(in.enc_up, in.enc_down, in.btn_valid);
       if (validated) {
-        // Ordre carousel : PRESET / SYNC / ROUTAGE / MONITOR / SYSTEM
+        // Ordre carousel : PRESET / SYNC / ROUTAGE / MONITOR / SYSTEM / TRANSPORT
         switch (carousel_selected) {
-          case 0: ps_enter();   ui_screen = UI_PRESETS;  break;
-          case 1: sync_enter(); ui_screen = UI_SYNC;     break;
-          case 2: rs_enter();   ui_screen = UI_ROUTING;  break;
-          case 3: mon_enter();  ui_screen = UI_MONITOR;  break;
-          case 4: sys_enter();  ui_screen = UI_SYSTEM;   break;
+          case 0: ps_enter();        ui_screen = UI_PRESETS;   break;
+          case 1: sync_enter();      ui_screen = UI_SYNC;      break;
+          case 2: rs_enter();        ui_screen = UI_ROUTING;   break;
+          case 3: mon_enter();       ui_screen = UI_MONITOR;   break;
+          case 4: sys_enter();       ui_screen = UI_SYSTEM;    break;
+          case 5: transport_enter(); ui_screen = UI_TRANSPORT; break;
         }
       }
       break;
@@ -157,13 +180,19 @@ void ui_tick() {
     }
 
     case UI_MONITOR: {
-      bool done = mon_handle_input(in.enc_up, in.enc_down, in.btn_valid, in.btn_back);
+      bool done = mon_handle_input(in.enc_up, in.enc_down, in.btn_valid, in.btn_back, in.btn_held);
       if (done) ui_screen = UI_CAROUSEL;
       break;
     }
 
     case UI_SYSTEM: {
       bool done = sys_handle_input(in.enc_up, in.enc_down, in.btn_valid, in.btn_back);
+      if (done) ui_screen = UI_CAROUSEL;
+      break;
+    }
+
+    case UI_TRANSPORT: {
+      bool done = transport_handle_input(in.enc_up, in.enc_down, in.btn_valid, in.btn_back_held);
       if (done) ui_screen = UI_CAROUSEL;
       break;
     }

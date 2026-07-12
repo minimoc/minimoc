@@ -42,25 +42,7 @@
       margin-right: 4px;
     }
     .logo span { color: #f9fafb; }
-    .fw-version-badge {
-      font-size: 11px;
-      color: #9ca3af;
-      background: #111827;
-      border: 1px solid #374151;
-      border-radius: 999px;
-      padding: 2px 8px;
-      white-space: nowrap;
-    }
     .header-sep { width: 1px; height: 28px; background: #374151; flex-shrink: 0; }
-    .compat-banner {
-      background: #451a03;
-      color: #fcd34d;
-      border-bottom: 1px solid #92400e;
-      padding: 8px 24px;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-    .compat-banner a { color: #fcd34d; text-decoration: underline; }
     .midi-select {
       background: #111827;
       border: 1px solid #374151;
@@ -181,14 +163,6 @@
     .nav-link:hover { color: #f9fafb; background: #ffffff0a; }
     .nav-link.active { color: #10b981; border-left-color: #10b981; background: #10b98110; }
     .nav-icon { font-size: 15px; width: 20px; text-align: center; }
-    .sidebar-footer-link {
-      margin-top: auto;
-      padding: 10px 20px;
-      font-size: 11px;
-      color: #6b7280;
-    }
-    .sidebar-footer-link a { color: #6b7280; }
-    .sidebar-footer-link a:hover { color: #9ca3af; }
 
     .main-content {
       flex: 1;
@@ -228,57 +202,6 @@
       margin-bottom: 16px;
       line-height: 1.5;
     }
-    .bpm-control { margin-top: 20px; }
-    .bpm-control label {
-      display: block;
-      font-size: 13px;
-      color: #d1d5db;
-      margin-bottom: 8px;
-      font-weight: 600;
-    }
-    .bpm-row { display: flex; align-items: center; gap: 14px; }
-    .bpm-btn {
-      width: 40px;
-      height: 40px;
-      border-radius: 8px;
-      border: 1px solid #374151;
-      background: #111827;
-      color: #f9fafb;
-      font-size: 20px;
-      font-weight: 700;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    .bpm-btn:hover { border-color: #10b981; color: #10b981; }
-    .bpm-btn:active { background: #10b98122; }
-    .bpm-value {
-      font-size: 16px;
-      font-weight: 700;
-      color: #f9fafb;
-      min-width: 90px;
-      text-align: center;
-    }
-    .bpm-control .panel-hint { margin: 8px 0 0; }
-
-    .transport-row { display: flex; gap: 10px; }
-    .transport-btn {
-      width: 52px;
-      height: 44px;
-      border-radius: 8px;
-      border: 1px solid #374151;
-      background: #111827;
-      color: #f9fafb;
-      font-size: 20px;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    .transport-btn:hover { border-color: #10b981; color: #10b981; }
-    .transport-btn:active { background: #10b98122; }
-    .transport-btn.active {
-      background: #10b981;
-      border-color: #10b981;
-      color: #111827;
-    }
 
     /* ── NO MIDI ── */
     .no-midi {
@@ -302,22 +225,20 @@
       flex-wrap: wrap;
     }
     .sync-box {
-      width: 108px;
-      height: 60px;
+      width: 96px;
+      height: 76px;
       border-radius: 10px;
       border: 2px solid #374151;
       background: #111827;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 13px;
+      font-size: 22px;
       font-weight: 700;
       cursor: pointer;
       transition: all 0.15s;
       color: #6b7280;
       user-select: none;
-      text-align: center;
-      padding: 0 6px;
     }
     .sync-box:hover { border-color: #6b7280; color: #d1d5db; }
     .sync-box.active {
@@ -803,26 +724,11 @@ const { useState, useEffect, useRef, useCallback } = React;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const MANUFACTURER_ID = 0x7D;
-// Bumper à chaque changement de protocole SysEx incompatible avec un firmware
-// antérieur, et archiver alors l'ancien index.html dans versions/ — voir
-// versions.json (manifest de compatibilité) et le bandeau affiché par App().
-const WEBLINK_VERSION = '0.2.0';
 const N_IN   = 5;
 const N_OUT  = 9;
 const IN_LABELS  = ['A', 'B', 'C', 'D', 'E'];
 const OUT_LABELS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
-// Doit rester synchronisé avec SYNC_LABELS dans firmware/logic.h.
-// Index 0-9 : lettre + TRS (physique DIN) ou USB Host (0-4) / câble USB miroir
-// PC (5-9). Index 10 : MINIMOC (horloge interne). "OFF" n'a pas d'index côté
-// firmware : sur le fil c'est la valeur spéciale 0x7F.
-const SYNC_LABELS = [
-  'A-TRS', 'B-TRS', 'C-HOST', 'D-HOST', 'E-HOST',
-  'A-USB', 'B-USB', 'C-USB', 'D-USB', 'E-USB',
-  'MINIMOC', 'OFF',
-];
-
-// Doit rester synchronisé avec le switch de PCEditor.h (case 0x11).
-const TRANSPORT_ACTION = { PLAY_PAUSE: 0, STOP: 1, RECORD: 2, FAST_FORWARD: 3, REWIND: 4 };
+const SYNC_LABELS = ['A', 'B', 'C', 'D', 'E', 'OFF'];
 const MIN_PRESET = 1;
 const MAX_PRESET = 32;
 
@@ -840,24 +746,6 @@ const FACTORY_PRESETS_WEB = [
 // ── SysEx helpers ────────────────────────────────────────────────────────────
 function sysexMsg(body) {
   return new Uint8Array([0xF0, ...body, 0xF7]);
-}
-
-// ── Version compare (tolère le suffixe lettre : v0.2.2 < v0.2.2a < v0.2.2b) ──
-function parseVersion(v) {
-  const m = /^v?(\d+)\.(\d+)\.(\d+)([a-z]*)$/i.exec((v || '').trim());
-  if (!m) return null;
-  return { major: +m[1], minor: +m[2], patch: +m[3], suffix: m[4].toLowerCase() };
-}
-
-// -1 si a<b, 0 si égal, 1 si a>b, null si l'une des deux chaînes est invalide
-function compareVersions(a, b) {
-  const pa = parseVersion(a), pb = parseVersion(b);
-  if (!pa || !pb) return null;
-  for (const k of ['major', 'minor', 'patch']) {
-    if (pa[k] !== pb[k]) return pa[k] < pb[k] ? -1 : 1;
-  }
-  if (pa.suffix !== pb.suffix) return pa.suffix < pb.suffix ? -1 : 1;
-  return 0;
 }
 
 function encodeFluxMsg(idx, flux) {
@@ -1034,8 +922,6 @@ function makeDefaultState() {
     portSlot:     [0, 1, 2, 0, 1, 2],
     deviceNames:  ['', '', '', '', '', ''],  // noms des slots D1..D6
     preset:      1,
-    internalBpm: 100,   // tempo de l'horloge interne MINIMOC (source SYNC 10)
-    firmwareVersion: '',
   };
 }
 
@@ -1374,8 +1260,8 @@ function FirmwareSection({ send, connected, showToast }) {
       return;
     }
     try {
-      const resp = await fetch('./firmwares/releases.json');
-      if (!resp.ok) throw new Error(`HTTP ${resp.status} — ${resp.statusText} (./firmwares/releases.json)`);
+      const resp = await fetch('../../firmwares/releases.json');
+      if (!resp.ok) throw new Error(`HTTP ${resp.status} — ${resp.statusText} (../../firmwares/releases.json)`);
       const json = await resp.json();
       setServerList(Array.isArray(json) ? json : []);
     } catch(e) {
@@ -1390,7 +1276,7 @@ function FirmwareSection({ send, connected, showToast }) {
     setErr('');
     setFetchingHex(true);
     try {
-      const resp = await fetch(`./firmwares/${release.filename}`);
+      const resp = await fetch(`../../firmwares/${release.filename}`);
       if (!resp.ok) throw new Error(`Fichier introuvable (HTTP ${resp.status})`);
       const text = await resp.text();
       const parsed = parseIntelHex(text);
@@ -1871,83 +1757,12 @@ function App() {
   const [dev,   setDev]   = useState(makeDefaultState);
   const [dirty, setDirty] = useState(false);
 
-  // État Play/Pause purement local (le firmware ne renvoie pas encore cet
-  // état par SysEx) — bascule de façon optimiste à chaque clic/action, peut
-  // dériver si l'état est changé ailleurs (écran TRANSPORT physique).
-  const [transportPlaying, setTransportPlaying] = useState(false);
-
   // UI
   const [section,     setSection]     = useState('sync');
   const [showEditor,  setShowEditor]  = useState(false);
   const [editingIdx,  setEditingIdx]  = useState(null);
   const [toast,       setToast]       = useState(null);
   const [presetModal, setPresetModal] = useState(null); // {mode:'load'|'save', selected:n}
-
-  // Compatibilité weblink ↔ firmware
-  const [versionsManifest, setVersionsManifest] = useState(null);
-  const [compatWarning,    setCompatWarning]    = useState(null);
-  const [versionTimedOut,  setVersionTimedOut]  = useState(false);
-  const firmwareVersionRef = useRef('');   // miroir de dev.firmwareVersion, lu dans le timeout ci-dessous
-  const VERSION_TIMEOUT_MS = 2500;
-
-  useEffect(() => {
-    fetch('./versions.json')
-      .then(r => r.ok ? r.json() : null)
-      .then(setVersionsManifest)
-      .catch(() => setVersionsManifest(null));
-  }, []);
-
-  useEffect(() => { firmwareVersionRef.current = dev.firmwareVersion; }, [dev.firmwareVersion]);
-
-  // À chaque déconnexion (y compris pendant un reboot après flash OTA), on
-  // oublie la version affichée : sinon le badge/l'état de compatibilité
-  // resteraient basés sur l'ancien firmware pendant toute la reconnexion,
-  // au lieu de repartir à zéro pour le nouveau.
-  useEffect(() => {
-    if (!connected) {
-      setDev(prev => (prev.firmwareVersion ? { ...prev, firmwareVersion: '' } : prev));
-    }
-  }, [connected]);
-
-  // Les firmwares publiés avant l'ajout de la commande 0x03 (≤ v0.2.2b) ne
-  // répondent jamais à la demande de version — on ne peut pas les détecter
-  // par comparaison, seulement par absence de réponse après un délai.
-  useEffect(() => {
-    if (!connected) { setVersionTimedOut(false); return; }
-    setVersionTimedOut(false);
-    const t = setTimeout(() => {
-      if (!firmwareVersionRef.current) setVersionTimedOut(true);
-    }, VERSION_TIMEOUT_MS);
-    return () => clearTimeout(t);
-  }, [connected]);
-
-  useEffect(() => {
-    if (!versionsManifest) { setCompatWarning(null); return; }
-
-    if (versionTimedOut && !dev.firmwareVersion) {
-      // Pas de réponse à la demande de version : probablement un firmware
-      // antérieur à la commande 0x03. On propose l'archive la plus récente
-      // connue (la seule disponible à ce jour) faute de pouvoir identifier
-      // la version exacte.
-      const fallback = (versionsManifest.archive || [])[0];
-      setCompatWarning({ firmwareVersion: null, path: fallback ? fallback.path : null });
-      return;
-    }
-
-    if (!dev.firmwareVersion || !versionsManifest.current) {
-      setCompatWarning(null);
-      return;
-    }
-    const cmp = compareVersions(dev.firmwareVersion, versionsManifest.current.min_firmware);
-    if (cmp === null || cmp >= 0) {
-      setCompatWarning(null);   // firmware inconnu (comparaison impossible) ou assez récent
-      return;
-    }
-    const match = (versionsManifest.archive || []).find(
-      a => compareVersions(dev.firmwareVersion, a.max_firmware) <= 0
-    );
-    setCompatWarning({ firmwareVersion: dev.firmwareVersion, path: match ? match.path : null });
-  }, [dev.firmwareVersion, versionsManifest, versionTimedOut]);
 
   // ── send ──
   function send(body) {
@@ -2020,12 +1835,6 @@ function App() {
 
         case 0x0C: // sync master
           return { ...prev, syncMaster: body[0] };
-
-        case 0x03: // version firmware — ASCII (ex. "v0.3.0")
-          return { ...prev, firmwareVersion: String.fromCharCode(...Array.from(body)) };
-
-        case 0x04: // BPM horloge interne MINIMOC — 14 bits (2 octets 7-bit)
-          return { ...prev, internalBpm: body[0] | (body[1] << 7) };
 
         case 0x0D: // host config — 0x7F sur le fil = aucun slot (HC_NO_SLOT)
           return {
@@ -2181,67 +1990,6 @@ function App() {
     setDirty(true);
   }
 
-  function setInternalBpm(val) {
-    const clamped = Math.max(20, Math.min(300, val));
-    setDev(prev => ({ ...prev, internalBpm: clamped }));
-    send([MANUFACTURER_ID, 0x04, clamped & 0x7F, (clamped >> 7) & 0x7F]);
-    setDirty(true);
-  }
-
-  // Utilise la forme fonctionnelle de setDev (lit "prev", pas "dev" via la
-  // closure) — indispensable pour un appui maintenu : setInterval capture la
-  // fonction une seule fois, donc lire "dev.internalBpm" directement renverrait
-  // toujours la même valeur figée au lieu d'accumuler les pas.
-  function nudgeInternalBpm(delta) {
-    setDev(prev => {
-      const clamped = Math.max(20, Math.min(300, prev.internalBpm + delta));
-      send([MANUFACTURER_ID, 0x04, clamped & 0x7F, (clamped >> 7) & 0x7F]);
-      return { ...prev, internalBpm: clamped };
-    });
-    setDirty(true);
-  }
-
-  // ── Appui maintenu sur +/- BPM : un pas immédiat, puis répétition continue ──
-  const bpmHoldRef = useRef({ timeout: null, interval: null });
-  const BPM_HOLD_DELAY_MS   = 350;  // délai avant le début de la répétition
-  const BPM_HOLD_REPEAT_MS  = 90;   // cadence de répétition
-
-  function startBpmHold(delta) {
-    nudgeInternalBpm(delta);
-    stopBpmHold();
-    bpmHoldRef.current.timeout = setTimeout(() => {
-      bpmHoldRef.current.interval = setInterval(() => nudgeInternalBpm(delta), BPM_HOLD_REPEAT_MS);
-    }, BPM_HOLD_DELAY_MS);
-  }
-
-  function stopBpmHold() {
-    clearTimeout(bpmHoldRef.current.timeout);
-    clearInterval(bpmHoldRef.current.interval);
-    bpmHoldRef.current.timeout  = null;
-    bpmHoldRef.current.interval = null;
-  }
-
-  // Coupe la répétition si le bouton quitte la fenêtre encore enfoncé (drag hors bouton, etc.)
-  useEffect(() => {
-    window.addEventListener('mouseup', stopBpmHold);
-    window.addEventListener('touchend', stopBpmHold);
-    return () => {
-      window.removeEventListener('mouseup', stopBpmHold);
-      window.removeEventListener('touchend', stopBpmHold);
-      stopBpmHold();
-    };
-  }, []);
-
-  // ACTION : 0=Play/Pause 1=Stop 2=Record 3=Fast Forward 4=Rewind (cf. PCEditor.h case 0x11)
-  function sendTransportAction(action) {
-    send([MANUFACTURER_ID, 0x11, action]);
-    if (action === TRANSPORT_ACTION.PLAY_PAUSE) {
-      setTransportPlaying(p => !p);
-    } else if (action === TRANSPORT_ACTION.STOP) {
-      setTransportPlaying(false);
-    }
-  }
-
   function toggleMatrix(inIdx, outIdx) {
     setDev(prev => {
       const mat = [...prev.basicMatrix];
@@ -2308,11 +2056,6 @@ function App() {
       {/* HEADER */}
       <header className="header">
         <div className="logo">mini<span>Moc</span></div>
-        {isConnected && dev.firmwareVersion && (
-          <span className="fw-version-badge" title="Version du firmware connecté">
-            {dev.firmwareVersion}
-          </span>
-        )}
         <div className="header-sep" />
 
         <select
@@ -2341,22 +2084,6 @@ function App() {
         </div>
       </header>
 
-      {compatWarning && (
-        <div className="compat-banner">
-          {compatWarning.firmwareVersion ? (
-            <>⚠️ Ce firmware ({compatWarning.firmwareVersion}) est plus ancien que ce configurateur (v{WEBLINK_VERSION}).{' '}</>
-          ) : (
-            <>⚠️ Cet appareil n'a pas répondu à la demande de version — il s'agit probablement d'un firmware
-            antérieur à v0.3.0 (avant l'ajout de cette commande), incompatible avec ce configurateur (v{WEBLINK_VERSION}).{' '}</>
-          )}
-          {compatWarning.path ? (
-            <>Utilisez la <a href={compatWarning.path} target="_blank" rel="noreferrer">version compatible du configurateur</a>.</>
-          ) : (
-            <>Aucune version compatible connue — certaines fonctions peuvent ne pas marcher.</>
-          )}
-        </div>
-      )}
-
       <div className="app-body">
         {/* SIDEBAR */}
         <nav className="sidebar">
@@ -2377,13 +2104,6 @@ function App() {
               {item.label}
             </div>
           ))}
-
-          {/* Filet de sécurité, indépendant de la détection auto de compatibilité :
-              toujours accessible même si le firmware ne répond pas à la requête
-              de version (anciens firmwares ne connaissent pas la commande 0x03). */}
-          <div className="sidebar-footer-link">
-            v{WEBLINK_VERSION} — <a href="versions/v0.1.0/" target="_blank" rel="noreferrer">configurateur classique</a>
-          </div>
         </nav>
 
         {/* MAIN */}
@@ -2426,7 +2146,7 @@ function App() {
                     </p>
                     <div className="sync-grid">
                       {SYNC_LABELS.map((lbl, i) => {
-                        const val      = i < 11 ? i : 0x7F;
+                        const val      = i < 5 ? i : 0x7F;
                         const isActive = dev.syncMaster === val;
                         return (
                           <div
@@ -2438,54 +2158,6 @@ function App() {
                           </div>
                         );
                       })}
-                    </div>
-
-                    <div className="bpm-control">
-                      <label htmlFor="internal-bpm">
-                        Tempo de l'horloge interne MINIMOC
-                      </label>
-                      <div className="bpm-row">
-                        <button
-                          className="bpm-btn"
-                          onMouseDown={() => startBpmHold(-1)}
-                          onMouseUp={stopBpmHold}
-                          onMouseLeave={stopBpmHold}
-                          onTouchStart={e => { e.preventDefault(); startBpmHold(-1); }}
-                          onTouchEnd={stopBpmHold}
-                        >−</button>
-                        <span id="internal-bpm" className="bpm-value">{dev.internalBpm} BPM</span>
-                        <button
-                          className="bpm-btn"
-                          onMouseDown={() => startBpmHold(1)}
-                          onMouseUp={stopBpmHold}
-                          onMouseLeave={stopBpmHold}
-                          onTouchStart={e => { e.preventDefault(); startBpmHold(1); }}
-                          onTouchEnd={stopBpmHold}
-                        >+</button>
-                      </div>
-                      <p className="panel-hint">
-                        N'a d'effet que lorsque MINIMOC est sélectionné comme maître ci-dessus.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="panel">
-                    <p className="panel-hint">
-                      Boutons de transport de l'horloge interne MINIMOC (identiques aux gestes
-                      de l'écran TRANSPORT sur l'appareil).
-                    </p>
-                    <div className="transport-row">
-                      <button
-                        className={`transport-btn${transportPlaying ? ' active' : ''}`}
-                        title={transportPlaying ? 'Pause' : 'Play'}
-                        onClick={() => sendTransportAction(TRANSPORT_ACTION.PLAY_PAUSE)}
-                      >
-                        {transportPlaying ? '⏸' : '▶'}
-                      </button>
-                      <button className="transport-btn" title="Stop" onClick={() => sendTransportAction(TRANSPORT_ACTION.STOP)}>⏹</button>
-                      <button className="transport-btn" title="Record" onClick={() => sendTransportAction(TRANSPORT_ACTION.RECORD)}>⏺</button>
-                      <button className="transport-btn" title="Rewind" onClick={() => sendTransportAction(TRANSPORT_ACTION.REWIND)}>⏪</button>
-                      <button className="transport-btn" title="Avance" onClick={() => sendTransportAction(TRANSPORT_ACTION.FAST_FORWARD)}>⏩</button>
                     </div>
                   </div>
                 </>

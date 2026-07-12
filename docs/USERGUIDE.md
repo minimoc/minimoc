@@ -1,6 +1,6 @@
 # Mode d'emploi — miniMoc
 
-> Version 0.2.1
+> Version 0.3.0
 
 ---
 
@@ -35,7 +35,8 @@ Le **miniMoc** est un routeur MIDI hardware fait main, conçu pour fonctionner *
 - Routage basique par matrice 5×9 (un bouton = une connexion)
 - Routage avancé par **Flux** : filtrage par canal, remapping de canal
 - **Smart Mirror** : les ports physiques apparaissent automatiquement dans votre DAW quand vous branchez un PC — sans driver, sans configuration
-- Synchronisation MIDI Clock : choix d'un maître, diffusion sur toutes les sorties
+- Synchronisation MIDI Clock : choix d'un maître parmi 10 sources externes (TRS/USB Host physique ou câble USB/PC, au choix) **ou l'horloge interne du miniMoc lui-même**, diffusion sur toutes les sorties
+- Menu **TRANSPORT** : réglage du tempo de l'horloge interne, Play/Pause/Stop, et pilotage d'un enregistreur externe (MMC Record/Avance/Rewind)
 - 32 presets utilisateur + 8 presets d'usine, stockés sur carte SD
 - Enregistrement automatique de toutes les données MIDI sur carte SD
 - Mise à jour firmware OTA via l'éditeur web
@@ -93,10 +94,10 @@ L'interface est composée de :
 
 ### Navigation dans le carousel principal
 
-Au démarrage, l'écran affiche un **carousel** de 5 sections :
+Au démarrage, l'écran affiche un **carousel** de 6 sections :
 
 ```
-◀ PRESET   ROUTAGE   SYNC   MONITOR   SYSTEME ▶
+◀ PRESET   SYNC   ROUTAGE   MONITOR   SYSTEME   TRANSPORT ▶
 ```
 
 Tournez l'encodeur pour changer de section. Appuyez sur SELECT pour entrer.
@@ -198,18 +199,37 @@ Jusqu'à **16 flux simultanés** sont possibles.
 
 ## 8. Synchronisation MIDI Clock (SYNC)
 
-Le miniMoc peut prendre **une seule entrée** comme maître d'horloge et diffuser son Clock, Start, Stop, Continue sur **toutes les sorties actives**.
+Le miniMoc peut prendre **une seule source** comme maître d'horloge et diffuser son Clock, Start, Stop, Continue sur **toutes les sorties actives** (physiques et USB Host), avec un miroir vers le PC (smartmirror) sur les câbles correspondants.
+
+### Pourquoi chaque lettre a deux variantes
+
+Chaque port A-E existe sous **deux formes distinctes** comme source d'horloge :
+
+- **TRS / USB Host** : le signal reçu sur l'entrée physique elle-même (câble TRS pour A/B, appareil USB branché pour C/D/E).
+- **USB/PC** : le signal envoyé par votre ordinateur (via le smartmirror) sur le câble USB miroir de ce même port.
+
+Ce sont deux sources potentiellement différentes qui partagent la même lettre. Sans cette distinction, choisir « A » écouterait les deux en même temps — si un vrai clock TRS et le smartmirror envoient tous les deux du Clock sur le port A, les ticks se mélangent et le tempo devient instable. En choisissant explicitement **A (TRS)** ou **A (USB/PC)**, une seule des deux sources est réellement écoutée.
+
+### Les 11 sources disponibles
+
+| Source | Ce qu'elle écoute |
+|--------|-------------------|
+| **A (TRS)** / **B (TRS)** | Entrée physique TRS |
+| **C (USB Host)** / **D (USB Host)** / **E (USB Host)** | Appareil USB branché directement sur le miniMoc |
+| **A (USB/PC)** … **E (USB/PC)** | Câble USB miroir correspondant, piloté depuis votre ordinateur (smartmirror) |
+| **MINIMOC** | Horloge interne du miniMoc — voir ci-dessous |
+| **OFF** | Aucune horloge propagée |
 
 ### Configurer le maître
 
-**Via l'éditeur web — onglet SYNC** :
-- Cliquez sur l'une des 6 cases : **A, B, C, D, E, OFF**
-- La case sélectionnée s'inverse (fond blanc)
-- Le réglage est sauvegardé immédiatement
-
 **Via l'écran OLED — section SYNC** :
-- Tournez l'encodeur pour choisir la source
-- SELECT pour valider
+- Tournez l'encodeur pour faire défiler la liste (11 sources + OFF)
+- SELECT pour valider — le choix est sauvegardé immédiatement
+
+**Via l'éditeur web — onglet SYNC** :
+- Cliquez sur l'une des cases de la grille
+- La source active est marquée d'un `*`
+- Le réglage est envoyé et sauvegardé immédiatement
 
 ### Ce qui est transmis depuis le maître
 
@@ -218,22 +238,43 @@ Le miniMoc peut prendre **une seule entrée** comme maître d'horloge et diffuse
 - Active Sensing (FE)
 - System Reset (FF)
 
-### Ce qui est filtré
+Les messages Real-Time des sources non sélectionnées sont **ignorés**, pour éviter les conflits d'horloge. Réglez **OFF** si vous ne souhaitez propager aucun clock.
 
-Les messages Real-Time des autres entrées (non-maître) sont **ignorés** pour éviter les conflits d'horloge.
+### Horloge interne (MINIMOC)
 
-> Réglez **OFF** si vous ne souhaitez pas propager de clock du tout.
+Le miniMoc peut être son propre maître d'horloge, sans dépendre d'aucun appareil externe : sélectionnez **MINIMOC** dans la liste SYNC. Le tempo est généré en continu par une horloge matérielle dédiée du Teensy — il reste précis même quand l'écran est très sollicité (VU-mètre, navigation dans les menus). Réglez le tempo et pilotez la lecture depuis le menu **TRANSPORT** (voir ci-dessous) ou depuis l'onglet SYNC de l'éditeur web.
+
+### Menu TRANSPORT
+
+Accessible depuis le carousel principal, cet écran n'affiche que le **BPM en grand** et un indicateur **PLAY / PAUSE / STOP**.
+
+| Geste | Action |
+|-------|--------|
+| Tourner l'encodeur | Régler le tempo (±1 BPM ; ±5 si vous tournez vite) |
+| Clic encodeur | Play / Pause — premier départ = Start, reprise après pause = Continue (la lecture reprend, elle ne redémarre pas) |
+| Clic simple sur BACK, en pause | STOP — arrête réellement l'horloge ; le Play suivant redémarrera depuis le début |
+| Clic simple sur BACK, en lecture ou déjà stoppé | Retour au menu précédent |
+| Maintenir BACK + clic encodeur | RECORD — commande un enregistreur/DAW externe (MMC) |
+| Maintenir BACK + tourner à droite | AVANCE (MMC Fast Forward) |
+| Maintenir BACK + tourner à gauche | REWIND (MMC Rewind) |
+
+> Record/Avance/Rewind utilisent le protocole **MMC** (MIDI Machine Control), pensé pour piloter un enregistreur ou un DAW externe — c'est un protocole différent du Play/Pause/Stop "temps réel" qui pilote les appareils synchronisés sur le clock. Les deux peuvent être utilisés indépendamment.
+
+Depuis l'éditeur web, l'onglet SYNC propose les mêmes contrôles : deux boutons **−/+** pour le tempo (appui maintenu = défilement continu) et une rangée de boutons ▶/⏸ ⏹ ⏺ ⏪ ⏩.
 
 ### Visualiser le BPM en temps réel
 
 Depuis le carousel, entrez dans **MONITOR** puis tournez l'encodeur vers la droite pour passer à l'écran **BPM**.
 
-- La source maître est rappelée en haut de l'écran (A / B / C / D / E / OFF).
+- La source maître est rappelée en haut de l'écran.
 - Le BPM du maître est affiché en grands chiffres, arrondi à l'entier le plus proche.
+- La LED embarquée du miniMoc clignote à chaque temps (toutes les 24 ticks de Clock).
 - Si aucun signal n'est reçu depuis plus de 2 secondes, l'écran affiche **NO CLOCK**.
 - Tournez l'encodeur vers la gauche pour revenir à l'écran VU-mètre.
 
-> **Important** : l'écran MONITOR se rafraîchit en permanence (chaque rafraîchissement de l'affichage OLED bloque le bus I²C ~20 ms). Pour éviter tout jitter sur les sorties MIDI à forte densité de données, **revenez à l'écran d'accueil (la feuille du carousel) dès que vous n'avez plus besoin du moniteur**.
+La fréquence d'actualisation de cette page se règle dans **SYSTEME → BPM REFRESH** (de 250ms à 5s, ou **MANUEL** pour ne jamais rafraîchir automatiquement). Quel que soit le réglage, un **clic sur l'encodeur** pendant que cette page est affichée force toujours une actualisation immédiate — pratique en mode MANUEL, ou pour vérifier le tempo à l'instant précis où vous le voulez.
+
+> **Important** : l'écran MONITOR se rafraîchit en permanence (chaque rafraîchissement de l'affichage OLED bloque le bus I²C ~20 ms). Pour éviter tout jitter sur les sorties MIDI à forte densité de données, **revenez à l'écran d'accueil (la feuille du carousel) dès que vous n'avez plus besoin du moniteur**. Ceci ne concerne pas l'horloge MINIMOC : générée par un timer matériel dédié, elle reste précise même écran actif.
 
 ---
 
@@ -364,11 +405,13 @@ Ouvrez le fichier `weblink/index.html` depuis votre navigateur, ou accédez à l
 3. Sélectionnez **miniMoc** (ou le nom qui lui correspond)
 4. Le point de statut devient **vert** ("Connecté")
 
+> Un badge affiche la version du firmware connecté à côté du logo. Si ce firmware est trop ancien pour cette version de l'éditeur web, un bandeau d'avertissement apparaît avec un lien vers une version compatible du configurateur — voir [Dépannage](#15-dépannage).
+
 ### Onglets disponibles
 
 | Onglet | Fonction |
 |--------|----------|
-| **SYNC** | Choisir la source d'horloge maître |
+| **SYNC** | Choisir la source d'horloge maître (11 sources + OFF), régler le tempo de l'horloge interne (boutons −/+, appui maintenu = défilement continu) et piloter le transport (▶/⏸ ⏹ ⏺ ⏪ ⏩) |
 | **MATRICE** | Routage basique (grille 5×9) |
 | **FLUX** | Routage avancé (filtrage et remapping de canaux) |
 | **HOST CONFIG** | Gestion des appareils USB |
@@ -426,19 +469,30 @@ CAROUSEL PRINCIPAL
 │   ├── MATRICE   ← grille 5×9
 │   └── FLUX      ← liste des flux / créer / éditer / supprimer
 │
-├── SYNC
-│   └── Sélectionner la source maître (A / B / C / D / E / OFF)
+├── SYNC   ← liste défilante, 11 sources + OFF
+│   ├── A (TRS) / B (TRS)
+│   ├── C (USB Host) / D (USB Host) / E (USB Host)
+│   ├── A (USB/PC) … E (USB/PC)
+│   ├── MINIMOC   ← horloge interne
+│   └── OFF
 │
 ├── MONITOR
 │   ├── Page 1 — VU-mètres temps réel (5 entrées + 9 sorties)
 │   └── Page 2 — BPM du maître SYNC en grand (tournez l'encodeur pour naviguer)
 │
-└── SYSTEME
-    ├── INFO          ← numéro preset, stats SD, noms appareils USB
-    ├── HOST CONFIG   ← mode AUTO/MANUEL, assignation des slots
-    ├── USB LINK      ← forcer détection appareils (2,5 s)
-    ├── USB RESET     ← redémarrage complet Teensy
-    └── CONTRASTE     ← luminosité OLED (16–255)
+├── SYSTEME
+│   ├── INFO           ← numéro preset, stats SD, noms appareils USB
+│   ├── HOST CONFIG    ← mode AUTO/MANUEL, assignation des slots
+│   ├── USB LINK       ← forcer détection appareils (2,5 s)
+│   ├── USB RESET      ← redémarrage complet Teensy
+│   ├── CONTRASTE      ← luminosité OLED (16–255)
+│   └── BPM REFRESH    ← fréquence d'actualisation de la page BPM du MONITOR (250ms–5s ou MANUEL)
+│
+└── TRANSPORT   ← tempo + transport de l'horloge interne MINIMOC
+    ├── Tourner l'encodeur     : ±1 BPM (±5 en rotation rapide)
+    ├── Clic encodeur          : Play / Pause
+    ├── Clic simple BACK       : STOP (si en pause) ou retour au menu précédent
+    └── BACK maintenu + encodeur : Record / Avance / Rewind (MMC)
 ```
 
 ---
@@ -451,7 +505,9 @@ CAROUSEL PRINCIPAL
 | L'éditeur web ne se connecte pas | USB non reconnu | Essayez un autre port USB ou câble |
 | Pas de son en sortie | Matrice vide | Vérifiez onglet MATRICE — activez les cellules |
 | Doublement du signal MIDI | Flux + Matrice actifs simultanément | Désactivez la cellule Matrice correspondant au Flux |
-| Clock irrégulier | Plusieurs sources de clock | SYNC → sélectionnez un seul maître |
+| Clock irrégulier | Plusieurs sources de clock actives sur la même lettre | Choisissez explicitement **TRS/Host** ou **USB/PC** dans SYNC — les deux ne sont plus mélangées automatiquement |
+| Le tempo affiché ne bouge pas quand je change le BPM | Réglage BPM REFRESH sur un intervalle long ou MANUEL | Cliquez l'encodeur sur la page BPM du MONITOR pour forcer une actualisation immédiate |
+| L'éditeur web affiche un bandeau "firmware plus ancien" | Le firmware connecté ne supporte pas certaines fonctions de cette version de l'éditeur | Utilisez le lien du bandeau (ou le lien "configurateur classique" en bas de la barre latérale) vers la version compatible |
 | Appareils USB non reconnus | Ordre de connexion | SYSTEME → USB LINK, ou USB RESET |
 | Appareils USB changent de port | Mode AUTO actif | HOST CONFIG → passer en mode MANUEL |
 | Carte SD non détectée | Carte absente ou non formatée | Insérez une carte SD formatée FAT32 |

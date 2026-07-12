@@ -28,5 +28,11 @@
     "filename": "minimoc_v0.2.2b.hex",
     "date": "2026-06-30",
     "description": "Monitor Optimsé ++"
+  },
+  {
+    "version": "v0.3.0",
+    "filename": "minimoc_v0.3.0.hex",
+    "date": "2026-07-11",
+    "description": "MasterSync"
   }
 ]

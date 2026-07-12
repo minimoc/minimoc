@@ -7,14 +7,12 @@ static uint8_t mon_page = 0;   // 0=VU  1=BPM
 
 // ── Page BPM ─────────────────────────────────────────────────────────
 void mon_draw_bpm() {
-    bpm_compute();
     u8g2.clearBuffer();
 
     // En-tête : source maître + indicateur de page
     u8g2.setFont(UI_FONT_SMALL);
-    static const char* _mon_sync_lbl[] = {"A","B","C","D","E"};
-    const char* master_lbl = (sync_master <= 4) ? _mon_sync_lbl[sync_master] : "OFF";
-    char hdr[20];
+    const char* master_lbl = (sync_master < SYNC_SOURCE_COUNT) ? SYNC_LABELS[sync_master] : "OFF";
+    char hdr[24];   // "MASTER: " (8) + plus long libellé, ex. "C (USB Host)" (12) + '\0'
     snprintf(hdr, sizeof(hdr), "MASTER: %s", master_lbl);
     u8g2.drawStr(0, 8, hdr);
     u8g2.drawStr(110, 8, "2/2");
@@ -40,21 +38,37 @@ void mon_draw_bpm() {
 }
 
 // ── Handler ───────────────────────────────────────────────────────────
-bool mon_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) {
+bool mon_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back, bool btn_held) {
     if (btn_back) return true;   // retour au carousel
 
     bool page_changed = false;
     if (enc_down && mon_page < 1) { mon_page++; page_changed = true; }
     if (enc_up   && mon_page > 0) { mon_page--; page_changed = true; }
 
-    // Throttle : redessiner au max toutes les 300ms pour réduire le blocage I2C (~8ms/sendBuffer à 1MHz).
+    // Throttle séparé par page pour réduire le blocage I2C (~8ms/sendBuffer à 1MHz).
     // Un changement de page force un redraw immédiat.
-    static uint32_t mon_last_draw_ms = 0;
+    static uint32_t mon_last_draw_ms = 0;   // page VU-mètre (fixe, 1000ms)
+    static uint32_t bpm_last_draw_ms = 0;   // page BPM (configurable, SYSTEM > BPM REFRESH)
     uint32_t now = millis();
-    if (page_changed || (now - mon_last_draw_ms >= 1000)) {
-        mon_last_draw_ms = now;
-        if (mon_page == 1) mon_draw_bpm();
-        else               mon_draw();
+
+    if (mon_page == 1) {
+        // Un clic sur l'encodeur force toujours un rafraîchissement immédiat, y compris
+        // en mode MANUEL (interval == 0, jamais de rafraîchissement auto). Si le bouton
+        // reste appuyé en continu, répétition fixe toutes les 1000ms tant qu'il est tenu,
+        // indépendamment de l'intervalle configuré.
+        uint16_t interval = BPM_REFRESH_OPTIONS[bpm_refresh_idx];
+        uint32_t elapsed  = now - bpm_last_draw_ms;
+        bool auto_due = (interval > 0) && (elapsed >= interval);
+        bool held_due = btn_held && (elapsed >= 1000);
+        if (page_changed || btn_valid || held_due || auto_due) {
+            bpm_last_draw_ms = now;
+            mon_draw_bpm();
+        }
+    } else {
+        if (page_changed || (now - mon_last_draw_ms >= 1000)) {
+            mon_last_draw_ms = now;
+            mon_draw();
+        }
     }
 
     return false;

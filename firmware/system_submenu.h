@@ -1,29 +1,49 @@
 #pragma once
-// system_submenu.h — Sous-menu SYSTEM : INFO / HOST CONFIG / USB LINK / USB RESET / CONTRASTE
+// system_submenu.h — Sous-menu SYSTEM : INFO / HOST CONFIG / USB LINK / USB RESET / CONTRASTE / BPM REFRESH
 // Doit être inclus après info_submenu.h et usb_host_config.h
 
-enum SysSubState { SYS_LIST, SYS_INFO, SYS_HOST_CONFIG, SYS_USB_RESET, SYS_CONTRAST };
+enum SysSubState { SYS_LIST, SYS_INFO, SYS_HOST_CONFIG, SYS_USB_RESET, SYS_CONTRAST, SYS_BPM_REFRESH };
 static SysSubState sys_state  = SYS_LIST;
 static uint8_t     sys_cursor = 0;
+static uint8_t     sys_scroll = 0;   // index du premier item visible dans la liste
 
-static const char* SYS_ITEMS[] = { "INFO", "HOST CONFIG", "USB LINK", "USB RESET", "CONTRASTE" };
-#define SYS_ITEM_COUNT 5
+static const char* SYS_ITEMS[] = { "INFO", "HOST CONFIG", "USB LINK", "USB RESET", "CONTRASTE", "BPM REFRESH" };
+#define SYS_ITEM_COUNT 6
+
+// Police agrandie pour la liste (7x13, identique au titre) + défilement
+// pour garder le curseur visible quand tous les items ne tiennent pas.
+#define SYS_ITEM0_Y  31
+#define SYS_ROW_H    14
+#define SYS_VISIBLE  3   // lignes visibles simultanément dans la liste
 
 void sys_draw_list() {
     u8g2.clearBuffer();
     u8g2.setFont(UI_FONT_TITLE);
     u8g2.drawStr(0, 14, "SYSTEM");
     u8g2.drawHLine(0, 18, SCREEN_W);
-    u8g2.setFont(UI_FONT_BODY);
-    for (uint8_t i = 0; i < SYS_ITEM_COUNT; i++) {
-        int y = 26 + i * 11;
+
+    // Ajuste le défilement pour garder le curseur visible
+    if (sys_cursor < sys_scroll)                    sys_scroll = sys_cursor;
+    if (sys_cursor >= sys_scroll + SYS_VISIBLE)      sys_scroll = sys_cursor - SYS_VISIBLE + 1;
+
+    u8g2.setFont(UI_FONT_TITLE);
+    for (uint8_t vi = 0; vi < SYS_VISIBLE; vi++) {
+        uint8_t i = sys_scroll + vi;
+        if (i >= SYS_ITEM_COUNT) break;
+        int y = SYS_ITEM0_Y + vi * SYS_ROW_H;
         if (i == sys_cursor) {
-            u8g2.drawBox(0, y - 9, SCREEN_W, 11);
+            u8g2.drawBox(0, y - 11, SCREEN_W, SYS_ROW_H);
             u8g2.setDrawColor(0);
         }
         u8g2.drawStr(8, y, SYS_ITEMS[i]);
         u8g2.setDrawColor(1);
     }
+
+    // Flèches de défilement
+    u8g2.setFont(UI_FONT_SMALL);
+    if (sys_scroll > 0)                              u8g2.drawStr(122, 25, "^");
+    if (sys_scroll + SYS_VISIBLE < SYS_ITEM_COUNT)    u8g2.drawStr(122, 63, "v");
+
     u8g2.sendBuffer();
 }
 
@@ -46,6 +66,38 @@ void sys_draw_contrast() {
     u8g2.setFont(UI_FONT_BODY);
     uint8_t tw = u8g2.getStrWidth(buf);
     u8g2.drawStr((SCREEN_W - tw) / 2, 50, buf);
+
+    // Aide en bas
+    u8g2.setFont(UI_FONT_SMALL);
+    u8g2.drawStr(0, 63, "OK=sauver   Back=annuler");
+    u8g2.sendBuffer();
+}
+
+static uint8_t bpm_refresh_saved_idx = 0;  // sauvegarde pour annulation
+
+void sys_draw_bpm_refresh() {
+    u8g2.clearBuffer();
+    u8g2.setFont(UI_FONT_TITLE);
+    u8g2.drawStr(0, 14, "BPM REFRESH");
+    u8g2.drawHLine(0, 18, SCREEN_W);
+
+    // Valeur courante, centrée
+    uint16_t ms = BPM_REFRESH_OPTIONS[bpm_refresh_idx];
+    char buf[10];
+    if (ms == 0) strncpy(buf, "MANUEL", sizeof(buf));
+    else         snprintf(buf, sizeof(buf), "%u ms", ms);
+    u8g2.setFont(u8g2_font_8x13_tf);
+    uint8_t tw = u8g2.getStrWidth(buf);
+    u8g2.drawStr((SCREEN_W - tw) / 2, 38, buf);
+
+    // Indicateur de position dans la liste d'options
+    uint8_t dots_w = BPM_REFRESH_OPTION_COUNT * 8;
+    uint8_t dx = (SCREEN_W - dots_w) / 2;
+    for (uint8_t i = 0; i < BPM_REFRESH_OPTION_COUNT; i++) {
+        uint8_t cx = dx + i * 8 + 3;
+        if (i == bpm_refresh_idx) u8g2.drawDisc(cx, 48, 2);
+        else                      u8g2.drawCircle(cx, 48, 2);
+    }
 
     // Aide en bas
     u8g2.setFont(UI_FONT_SMALL);
@@ -118,6 +170,7 @@ bool sys_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back)
                     case 2: sys_do_usb_link();  sys_draw_list(); break;
                     case 3: sys_do_usb_reset(); sys_draw_list(); break;
                     case 4: contrast_saved = screen_contrast; sys_state = SYS_CONTRAST; sys_draw_contrast(); break;
+                    case 5: bpm_refresh_saved_idx = bpm_refresh_idx; sys_state = SYS_BPM_REFRESH; sys_draw_bpm_refresh(); break;
                 }
             }
             if (btn_back) { sys_state = SYS_LIST; return true; }
@@ -146,8 +199,16 @@ bool sys_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back)
             if (btn_back)  { screen_contrast = contrast_saved; contrast_apply(); sys_state = SYS_LIST; sys_draw_list(); break; }
             if (!btn_valid) sys_draw_contrast();
             break;
+
+        case SYS_BPM_REFRESH:
+            if (enc_up   && bpm_refresh_idx > 0)                           bpm_refresh_idx--;
+            if (enc_down && bpm_refresh_idx < BPM_REFRESH_OPTION_COUNT-1)  bpm_refresh_idx++;
+            if (btn_valid) { bpm_refresh_save(); sys_state = SYS_LIST; sys_draw_list(); break; }
+            if (btn_back)  { bpm_refresh_idx = bpm_refresh_saved_idx; sys_state = SYS_LIST; sys_draw_list(); break; }
+            if (!btn_valid) sys_draw_bpm_refresh();
+            break;
     }
     return false;
 }
 
-void sys_enter() { sys_state = SYS_LIST; sys_cursor = 0; }
+void sys_enter() { sys_state = SYS_LIST; sys_cursor = 0; sys_scroll = 0; }

@@ -24,14 +24,30 @@ static const FactoryPreset FACTORY_PRESETS[] = {
 // -----------------------------------------------------------------
 // SYNC — maître horloge/transport
 // -----------------------------------------------------------------
-// 0=A 1=B 2=C 3=D 4=E  0xFF=OFF (tout filtré)
+// Chaque lettre A-E a deux sources physiques distinctes (TRS/USB-Host d'un
+// côté, câble USB miroir venant du PC de l'autre — ex. le smartmirror). On
+// les distingue pour éviter qu'un maître "A" écoute les deux à la fois :
+//   0=A(TRS)  1=B(TRS)  2=C(USB Host)  3=D(USB Host)  4=E(USB Host)
+//   5=A(USB/PC)  6=B(USB/PC)  7=C(USB/PC)  8=D(USB/PC)  9=E(USB/PC)
+//   10=MINIMOC (horloge interne, tempo réglable — menu TRANSPORT)
+//   0xFF=OFF (tout filtré)
 uint8_t sync_master = 0xFF;
+
+static const char* SYNC_LABELS[] = {
+    "A (TRS)", "B (TRS)", "C (USB Host)", "D (USB Host)", "E (USB Host)",
+    "A (USB/PC)", "B (USB/PC)", "C (USB/PC)", "D (USB/PC)", "E (USB/PC)",
+    "MINIMOC"
+};
+#define SYNC_SOURCE_COUNT 11
+#define SYNC_MASTER_INTERNAL 10   // MiniMoc = horloge interne (pas un port physique)
 
 #define SYNC_EEPROM_ADDR     34   // 1 octet, après le bloc HC_EEPROM (2..33)
 #define CONTRAST_EEPROM_ADDR 35   // 1 octet, après SYNC
+#define BPM_REFRESH_EEPROM_ADDR 36   // 1 octet, après CONTRAST
+#define INTERNAL_BPM_EEPROM_ADDR 37  // 2 octets (uint16_t), après BPM_REFRESH
 
-// EEPROM : 0x7F = OFF (safe pour SysEx), 0-4 = A-E
-// RAM    : 0xFF = OFF (valeur interne), 0-4 = A-E
+// EEPROM : 0x7F = OFF (safe pour SysEx), 0-10 = cf. SYNC_LABELS
+// RAM    : 0xFF = OFF (valeur interne), 0-10 = cf. SYNC_LABELS
 static inline void sync_save() {
     uint8_t v = (sync_master == 0xFF) ? 0x7F : sync_master;
     EEPROM.put(SYNC_EEPROM_ADDR, v);
@@ -39,7 +55,26 @@ static inline void sync_save() {
 static inline void sync_load() {
     uint8_t v = 0x7F;
     EEPROM.get(SYNC_EEPROM_ADDR, v);
-    sync_master = (v <= 4) ? v : 0xFF;  // tout ce qui n'est pas 0-4 → OFF
+    sync_master = (v < SYNC_SOURCE_COUNT) ? v : 0xFF;  // hors plage → OFF
+}
+
+// Tempo de l'horloge interne (source MINIMOC) — réglable depuis le menu
+// TRANSPORT (voir transport_submenu.h), consommé par internal_clock_apply()/
+// internal_clock_isr() dans _midi.h (génération par IntervalTimer).
+#define INTERNAL_CLOCK_BPM_MIN     20u
+#define INTERNAL_CLOCK_BPM_MAX     300u
+#define INTERNAL_CLOCK_BPM_DEFAULT 100u
+
+uint16_t internal_clock_bpm = INTERNAL_CLOCK_BPM_DEFAULT;
+
+static inline void internal_clock_bpm_save() {
+    EEPROM.put(INTERNAL_BPM_EEPROM_ADDR, internal_clock_bpm);
+}
+static inline void internal_clock_bpm_load() {
+    uint16_t v = 0;
+    EEPROM.get(INTERNAL_BPM_EEPROM_ADDR, v);
+    internal_clock_bpm = (v >= INTERNAL_CLOCK_BPM_MIN && v <= INTERNAL_CLOCK_BPM_MAX)
+                          ? v : INTERNAL_CLOCK_BPM_DEFAULT;
 }
 
 uint8_t screen_contrast = 200;   // valeur par défaut (~78%)
@@ -51,6 +86,21 @@ static inline void contrast_load() {
     screen_contrast = (v > 0) ? v : 200;  // 0x00 = jamais initialisé → défaut
 }
 static inline void contrast_apply(){ u8g2.setContrast(screen_contrast); }
+
+// Intervalles disponibles pour le rafraîchissement auto de la page BPM (ms).
+// Index 0 = MANUEL (aucun rafraîchissement auto ; clic requis).
+static const uint16_t BPM_REFRESH_OPTIONS[] = { 0, 250, 500, 1000, 2000, 5000 };
+#define BPM_REFRESH_OPTION_COUNT 6
+#define BPM_REFRESH_DEFAULT_IDX  3   // 1000 ms = comportement actuel
+
+uint8_t bpm_refresh_idx = BPM_REFRESH_DEFAULT_IDX;
+
+static inline void bpm_refresh_save() { EEPROM.put(BPM_REFRESH_EEPROM_ADDR, bpm_refresh_idx); }
+static inline void bpm_refresh_load() {
+    uint8_t v = 0xFF;
+    EEPROM.get(BPM_REFRESH_EEPROM_ADDR, v);
+    bpm_refresh_idx = (v < BPM_REFRESH_OPTION_COUNT) ? v : BPM_REFRESH_DEFAULT_IDX;
+}
 
 // USB Host config — partagé entre logic.h, _midi.h et usb_host_config.h
 #define HC_NO_SLOT    0xFF   // slot non assigné

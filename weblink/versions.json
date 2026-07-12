@@ -1,0 +1,14 @@
+{
+  "current": {
+    "weblink_version": "0.2.0",
+    "min_firmware": "v0.3.0"
+  },
+  "archive": [
+    {
+      "weblink_version": "0.1.0",
+      "max_firmware": "v0.2.2b",
+      "path": "versions/v0.1.0/",
+      "description": "Sync A-E + OFF uniquement, pas de commande version/BPM interne"
+    }
+  ]
+}

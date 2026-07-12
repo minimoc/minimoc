@@ -2,6 +2,12 @@
 
 // Déclarations anticipées — fonctions définies dans des headers inclus après PCEditor.h
 void hc_save();    // usb_host_config.h
+// transport_submenu.h — actions de transport, partagées avec l'encodeur physique
+void transport_do_play_pause();
+void transport_do_stop();
+void transport_do_record();
+void transport_do_fastforward();
+void transport_do_rewind();
 
 // Envoie F0 7D 0F slotIdx name... F7 pour chaque device USB connecté
 static void _send_device_names() {
@@ -45,6 +51,18 @@ static void _send_device_names() {
 // Décodage : mask = m0 | (m1<<7) | (m2<<14)
 
 void sendFullDumpToPC() {
+  // 0. Version firmware (0x03) — F0 7D 03 <ascii...> F7 (ex. "v0.3.0")
+  // Envoyée EN PREMIER, avant la matrice de routage ci-dessous : celle-ci
+  // envoie jusqu'à 720 messages avec delay(2) entre chacun (≥1.4s), donc la
+  // version arriverait trop tard si elle était envoyée après — au point de
+  // dépasser le délai de détection du weblink (~2.5s) et de le faire croire,
+  // à tort, qu'il parle à un ancien firmware qui ne répond pas du tout.
+  { uint8_t buf[16]; uint8_t pos = 0;
+    buf[pos++] = 0x7D; buf[pos++] = 0x03;
+    const char* v = FIRMWARE_VERSION;
+    for (uint8_t i = 0; v[i] && pos < 15; i++) buf[pos++] = v[i] & 0x7F;
+    usbMIDI.sendSysEx(pos, buf); usbMIDI.send_now(); delay(2); }
+
   // 1. Matrice de routage (0x01) — maintenue pour compatibilité éditeur web
   for (uint8_t p = 0; p < 5; p++) {
     for (uint8_t c = 0; c < 16; c++) {
@@ -103,10 +121,15 @@ void sendFullDumpToPC() {
     usbMIDI.sendSysEx(pos, buf); delay(3);
   }
 
-  // 7. SYNC master (0x0C) — F0 7D 0C VALUE F7 (VALUE: 0-4=A-E, 0x7F=OFF)
+  // 7. SYNC master (0x0C) — F0 7D 0C VALUE F7 (VALUE: 0-10 cf. SYNC_LABELS dans logic.h, 0x7F=OFF)
   // 0xFF est illégal en SysEx (>7 bits) → mapper 0xFF→0x7F sur le fil
   { uint8_t v = (sync_master == 0xFF) ? 0x7F : sync_master;
     uint8_t d[] = {0x7D, 0x0C, v}; usbMIDI.sendSysEx(3, d); delay(2); }
+
+  // 7b. BPM horloge interne MINIMOC (0x04) — F0 7D 04 M0 M1 F7 (14 bits, cf. TRANSPORT)
+  { uint8_t d[] = {0x7D, 0x04,
+      (uint8_t)(internal_clock_bpm & 0x7F), (uint8_t)((internal_clock_bpm >> 7) & 0x7F)};
+    usbMIDI.sendSysEx(4, d); delay(2); }
 
   // 8. HOST CONFIG (0x0D) — F0 7D 0D mode p0 p1 p2 p3 p4 p5 F7
   { uint8_t d[] = {0x7D, 0x0D, (uint8_t)hc_locked,
@@ -216,11 +239,19 @@ void handleEditorSysex(byte* data, unsigned size) {
       break;
 
     case 0x0E: {  // QUICK POLL — preset + sync + basic_matrix + flux
+      { uint8_t buf[16]; uint8_t pos = 0;
+        buf[pos++] = 0x7D; buf[pos++] = 0x03;
+        const char* v = FIRMWARE_VERSION;
+        for (uint8_t i = 0; v[i] && pos < 15; i++) buf[pos++] = v[i] & 0x7F;
+        usbMIDI.sendSysEx(pos, buf); }
       { uint8_t p[] = {0x7D, 0x07, (uint8_t)current_preset};
         usbMIDI.sendSysEx(3, p); }
       { uint8_t sv = (sync_master == 0xFF) ? 0x7F : sync_master;
         uint8_t s[] = {0x7D, 0x0C, sv};
         usbMIDI.sendSysEx(3, s); }
+      { uint8_t d[] = {0x7D, 0x04,
+          (uint8_t)(internal_clock_bpm & 0x7F), (uint8_t)((internal_clock_bpm >> 7) & 0x7F)};
+        usbMIDI.sendSysEx(4, d); }
       usbMIDI.send_now();
       for (uint8_t i = 0; i < 5; i++) {
         for (uint8_t j = 0; j < 9; j++) {
@@ -267,13 +298,25 @@ void handleEditorSysex(byte* data, unsigned size) {
       break;
     }
 
-    case 0x0C:   // SET SYNC MASTER — F0 7D 0C VALUE F7 (0-4=A-E, 0x7F=OFF)
+    case 0x04:   // SET BPM HORLOGE INTERNE — F0 7D 04 M0 M1 F7 (14 bits, cf. TRANSPORT)
+      if (size >= 5) {
+        uint16_t v = (uint16_t)data[3] | ((uint16_t)data[4] << 7);
+        if (v >= INTERNAL_CLOCK_BPM_MIN && v <= INTERNAL_CLOCK_BPM_MAX) {
+          internal_clock_bpm = v;
+          internal_clock_bpm_save();
+          internal_clock_apply();   // reconfigure la période si l'horloge interne tourne déjà
+        }
+      }
+      break;
+
+    case 0x0C:   // SET SYNC MASTER — F0 7D 0C VALUE F7 (0-10 cf. SYNC_LABELS, 0x7F=OFF)
       // Sur le fil : 0x7F = OFF ; en interne on stocke 0xFF pour OFF
       if (size >= 4) {
         uint8_t v = data[3];
-        if (v <= 4 || v == 0x7F) {
+        if (v < SYNC_SOURCE_COUNT || v == 0x7F) {
           sync_master = (v == 0x7F) ? 0xFF : v;
           sync_save();
+          internal_clock_apply();   // démarre/arrête l'horloge interne selon le nouveau choix
         }
       }
       break;
@@ -297,6 +340,20 @@ void handleEditorSysex(byte* data, unsigned size) {
       delay(10);
       _reboot_Teensyduino_();   // fonction Teensyduino — entre en mode HalfKay
       while(1);
+      break;
+
+    case 0x11:   // TRANSPORT ACTION — F0 7D 11 ACTION F7
+      // ACTION : 0=Play/Pause 1=Stop 2=Record 3=Fast Forward 4=Rewind
+      // Mêmes fonctions que celles utilisées par l'encodeur physique (transport_submenu.h).
+      if (size >= 4) {
+        switch (data[3]) {
+          case 0: transport_do_play_pause();  break;
+          case 1: transport_do_stop();        break;
+          case 2: transport_do_record();      break;
+          case 3: transport_do_fastforward(); break;
+          case 4: transport_do_rewind();      break;
+        }
+      }
       break;
   }
 }
