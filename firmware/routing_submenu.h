@@ -9,6 +9,10 @@
 //   RS_FLUX_STEP1_CH : picker canaux entrée (overlay)
 //   RS_FLUX_STEP2    : sélection ports de sortie + canaux
 //   RS_FLUX_STEP2_CH : picker canaux sortie (overlay)
+//   RS_FLUX_TRANSFORM_TYPE : choix Aucun / Transpose / Harmonize
+//   RS_FLUX_STEP3    : réglage transpose (demi-tons)
+//   RS_FLUX_STEP4    : réglage harmonize (jusqu'à 4 intervalles)
+//   RS_FLUX_STEP4_VAL: picker valeur d'un intervalle harmonize (overlay)
 
 enum RoutingSubState {
   RS_MAIN,
@@ -19,6 +23,10 @@ enum RoutingSubState {
   RS_FLUX_STEP1_CH,
   RS_FLUX_STEP2,
   RS_FLUX_STEP2_CH,
+  RS_FLUX_TRANSFORM_TYPE,   // choix du type de transform (Aucun/Transpose/Harmonize)
+  RS_FLUX_STEP3,     // transpose
+  RS_FLUX_STEP4,     // harmonize : jusqu'à 4 intervalles
+  RS_FLUX_STEP4_VAL, // harmonize : édition fine d'un intervalle (overlay)
 };
 
 static RoutingSubState rs_state = RS_MAIN;
@@ -35,6 +43,7 @@ static uint8_t  rs_ch_cursor  = 0;   // curseur dans le picker 0-16 (16=TOUT)
 static uint8_t  rs_action_cur = 0;   // RS_FLUX_ACTION : 0=Modifier 1=Supprimer
 static uint8_t  rs_saved_port = 0xFF; // port sauvegardé avant toggle (long press recovery)
 static uint16_t rs_saved_mask = 0;   // chan_mask sauvegardé
+static uint8_t  rs_h_slot     = 0;   // RS_FLUX_STEP4_VAL : slot d'intervalle harmonize en cours d'édition (0-3)
 
 
 // Étiquettes
@@ -151,6 +160,14 @@ static void _flux_summary(uint8_t f, char* buf, uint8_t maxlen) {
       else         { snprintf(tmp,sizeof(tmp),":%dc", nc); }
       _app(tmp);
     }
+  }
+  // Transform actif (transpose ou harmonize) — affiché seulement s'il fait quelque chose
+  if (flux_list[f].transform.type == TRANS_NOTE_TRANSPOSE && flux_list[f].transform.transpose != 0) {
+    snprintf(tmp, sizeof(tmp), " T%+d", flux_list[f].transform.transpose);
+    _app(tmp);
+  } else if (flux_list[f].transform.type == TRANS_HARMONIZE && flux_list[f].transform.n_intervals > 0) {
+    snprintf(tmp, sizeof(tmp), " H%u", flux_list[f].transform.n_intervals);
+    _app(tmp);
   }
   buf[pos] = '\0';
 }
@@ -300,6 +317,107 @@ void rs_draw_step2() {
   u8g2.sendBuffer();
 }
 
+// ── RS_FLUX_TRANSFORM_TYPE — choix Aucun / Transpose / Harmonize ──
+static const char* RS_TRANSFORM_ITEMS[] = { "Aucun", "Transpose", "Harmonize" };
+#define RS_TRANSFORM_COUNT 3
+
+void rs_draw_transform_type() {
+  u8g2.clearBuffer();
+  u8g2.setFont(UI_FONT_TITLE);
+  u8g2.drawStr(0, 10, "TRANSFORM");
+  u8g2.drawHLine(0, 12, SCREEN_W);
+  u8g2.setFont(UI_FONT_BODY);
+  for (uint8_t i = 0; i < RS_TRANSFORM_COUNT; i++) {
+    uint8_t y = 26 + i * 14;
+    if (i == rs_step_cursor) { u8g2.drawBox(0, y-10, SCREEN_W, 13); u8g2.setDrawColor(0); }
+    u8g2.drawStr(8, y, RS_TRANSFORM_ITEMS[i]);
+    u8g2.setDrawColor(1);
+  }
+  u8g2.sendBuffer();
+}
+
+// ── RS_FLUX_STEP3 — transpose ──────────────────────────────────────
+void rs_draw_step3() {
+  u8g2.clearBuffer();
+  u8g2.setFont(UI_FONT_TITLE);
+  u8g2.drawStr(0, 10, "TRANSPOSE");
+  u8g2.drawHLine(0, 12, SCREEN_W);
+
+  // Valeur courante, grande et centrée
+  char val[8];
+  snprintf(val, sizeof(val), "%+d", rs_flux_tmp.transform.transpose);
+  uint8_t vw = u8g2.getStrWidth(val);
+  u8g2.drawStr((SCREEN_W - vw) / 2, 36, val);
+
+  u8g2.setFont(UI_FONT_SMALL);
+  const char* hint = "demi-tons (-24..+24)";
+  uint8_t hw = u8g2.getStrWidth(hint);
+  u8g2.drawStr((SCREEN_W - hw) / 2, 47, hint);
+
+  // Bouton "VALIDER" en bas (même style que STEP1/STEP2)
+  u8g2.drawBox(0, 54, SCREEN_W, 10);
+  u8g2.setDrawColor(0);
+  uint8_t lw = u8g2.getStrWidth("\x08 VALIDER");
+  u8g2.drawStr((SCREEN_W - lw) / 2, 62, "\x08 VALIDER");
+  u8g2.setDrawColor(1);
+
+  u8g2.sendBuffer();
+}
+
+// ── RS_FLUX_STEP4 — harmonize (jusqu'à 4 notes en plus) ────────────
+// cursor 0-3 = slots d'intervalle, 4 = VALIDER. Slot à 0 = inutilisé ("--").
+void rs_draw_step4() {
+  u8g2.clearBuffer();
+  u8g2.setFont(UI_FONT_TITLE);
+  u8g2.drawStr(0, 10, "HARMONIZE");
+  u8g2.drawHLine(0, 12, SCREEN_W);
+  u8g2.setFont(UI_FONT_BODY);
+
+  for (uint8_t i = 0; i < HARMONIZE_MAX_INTERVALS; i++) {
+    uint8_t y = 21 + i * 10;
+    bool sel = (rs_step_cursor == i);
+    int8_t v = rs_flux_tmp.transform.intervals[i];
+    char row[16];
+    if (v != 0) snprintf(row, sizeof(row), "%u: %+d", i+1, v);
+    else        snprintf(row, sizeof(row), "%u: --", i+1);
+    if (sel) { u8g2.drawBox(0, y-7, SCREEN_W, 9); u8g2.setDrawColor(0); }
+    u8g2.drawStr(4, y, row);
+    u8g2.setDrawColor(1);
+  }
+
+  // Bouton "VALIDER" en bas (même style que STEP1/STEP2/STEP3)
+  bool sel_ok = (rs_step_cursor == HARMONIZE_MAX_INTERVALS);
+  if (sel_ok) { u8g2.drawBox(0, 54, SCREEN_W, 10); u8g2.setDrawColor(0); }
+  else        { u8g2.drawFrame(0, 54, SCREEN_W, 10); }
+  u8g2.setFont(UI_FONT_SMALL);
+  uint8_t lw = u8g2.getStrWidth("\x08 VALIDER");
+  u8g2.drawStr((SCREEN_W - lw) / 2, 62, "\x08 VALIDER");
+  u8g2.setDrawColor(1);
+
+  u8g2.sendBuffer();
+}
+
+// ── RS_FLUX_STEP4_VAL — édition fine d'un intervalle harmonize ────
+void rs_draw_step4_val() {
+  u8g2.clearBuffer();
+  u8g2.setFont(UI_FONT_TITLE);
+  char title[16]; snprintf(title, sizeof(title), "NOTE %u", rs_h_slot + 1);
+  u8g2.drawStr(0, 10, title);
+  u8g2.drawHLine(0, 12, SCREEN_W);
+
+  char val[8];
+  snprintf(val, sizeof(val), "%+d", rs_flux_tmp.transform.intervals[rs_h_slot]);
+  uint8_t vw = u8g2.getStrWidth(val);
+  u8g2.drawStr((SCREEN_W - vw) / 2, 36, val);
+
+  u8g2.setFont(UI_FONT_SMALL);
+  const char* hint = "demi-tons (-24..+24)";
+  uint8_t hw = u8g2.getStrWidth(hint);
+  u8g2.drawStr((SCREEN_W - hw) / 2, 47, hint);
+
+  u8g2.sendBuffer();
+}
+
 // ── RS_FLUX_STEP1_CH / STEP2_CH — picker canaux ───────────────────
 // Grille 4×4 canaux 1-16 + item [TOUT] en bas
 // rs_ch_port = port concerné, rs_ch_is_out = false:in, true:out
@@ -388,7 +506,17 @@ static void _toggle_step2_port(uint8_t p) {
   }
 }
 
-// Long press detection pour RS_FLUX_STEP1/STEP2
+// Enregistre rs_flux_tmp dans flux_list et revient à la liste — dernier
+// geste commun aux 3 branches de sortie du wizard (Aucun / Transpose / Harmonize).
+static void _flux_save_and_return() {
+  if (rs_flux_idx >= flux_count) flux_count++;
+  flux_list[rs_flux_idx] = rs_flux_tmp;
+  recompute_route_matrix();
+  rs_state = RS_FLUX_LIST;
+  rs_cursor = rs_flux_idx;
+}
+
+// Long press detection pour RS_FLUX_STEP1/STEP2/STEP4
 static unsigned long rs_valid_hold_ms = 0;
 static bool          rs_valid_long_done = false;
 
@@ -398,17 +526,17 @@ bool rs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
 
   // Détection appui long sur VALID (channel picker Flux ou réglage pas grille)
   unsigned long now = millis();
-  // Tracker le long press uniquement dans STEP1/STEP2 (là où il fait sens).
+  // Tracker le long press uniquement dans STEP1/STEP2/STEP4 (là où il fait sens).
   // Tout autre btn_valid (MAIN, ACTION, LIST, pickers) ne démarre pas le timer.
   if (btn_valid &&
-      (rs_state == RS_FLUX_STEP1 || rs_state == RS_FLUX_STEP2)) {
+      (rs_state == RS_FLUX_STEP1 || rs_state == RS_FLUX_STEP2 || rs_state == RS_FLUX_STEP4)) {
     rs_valid_hold_ms  = now;
     rs_valid_long_done = false;
   }
   bool long_press = false;
   if (rs_valid_hold_ms > 0 && !rs_valid_long_done &&
       (now - rs_valid_hold_ms) > 700 &&
-      (rs_state == RS_FLUX_STEP1 || rs_state == RS_FLUX_STEP2)) {
+      (rs_state == RS_FLUX_STEP1 || rs_state == RS_FLUX_STEP2 || rs_state == RS_FLUX_STEP4)) {
     long_press = true;
     rs_valid_long_done = true;
     btn_valid = false;
@@ -548,12 +676,11 @@ bool rs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
       if (enc_down && rs_step_cursor < 9) rs_step_cursor++;
       if (btn_valid) {
         if (rs_step_cursor == 9) {
-          // ✓ Valider le flux
-          if (rs_flux_idx >= flux_count) flux_count++;
-          flux_list[rs_flux_idx] = rs_flux_tmp;
-          recompute_route_matrix();
-          rs_state = RS_FLUX_LIST;
-          rs_cursor = rs_flux_idx;
+          // → étape suivante : choix du type de transform
+          rs_valid_hold_ms   = 0;
+          rs_valid_long_done = true;
+          rs_step_cursor = rs_flux_tmp.transform.type;   // présélectionne le type courant
+          rs_state = RS_FLUX_TRANSFORM_TYPE;
         } else {
           // Sauvegarder le chan_mask avant suppression (pour restauration si long press)
           rs_saved_port = rs_step_cursor;
@@ -595,6 +722,73 @@ bool rs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
       }
       break;
 
+    // ── TRANSFORM TYPE — Aucun / Transpose / Harmonize ────────────
+    case RS_FLUX_TRANSFORM_TYPE:
+      if (enc_up   && rs_step_cursor > 0)                        rs_step_cursor--;
+      if (enc_down && rs_step_cursor < RS_TRANSFORM_COUNT-1)      rs_step_cursor++;
+      if (btn_valid) {
+        if (rs_step_cursor == TRANS_NONE) {
+          rs_flux_tmp.transform.type = TRANS_NONE;
+          _flux_save_and_return();
+        } else if (rs_step_cursor == TRANS_NOTE_TRANSPOSE) {
+          rs_flux_tmp.transform.type = TRANS_NOTE_TRANSPOSE;
+          rs_state = RS_FLUX_STEP3;
+        } else {   // TRANS_HARMONIZE
+          rs_flux_tmp.transform.type = TRANS_HARMONIZE;
+          rs_step_cursor = 0;
+          rs_state = RS_FLUX_STEP4;
+        }
+      }
+      if (btn_back) { rs_state = RS_FLUX_STEP2; rs_step_cursor = 9; }
+      break;
+
+    // ── FLUX STEP 3 — transpose ──────────────────────────────────
+    case RS_FLUX_STEP3:
+      if (enc_up   && rs_flux_tmp.transform.transpose > FLUX_TRANSPOSE_MIN) rs_flux_tmp.transform.transpose--;
+      if (enc_down && rs_flux_tmp.transform.transpose < FLUX_TRANSPOSE_MAX) rs_flux_tmp.transform.transpose++;
+      if (btn_valid) _flux_save_and_return();
+      if (btn_back) { rs_state = RS_FLUX_TRANSFORM_TYPE; rs_step_cursor = TRANS_NOTE_TRANSPOSE; }
+      break;
+
+    // ── FLUX STEP 4 — harmonize : liste des 4 slots d'intervalle ─
+    case RS_FLUX_STEP4:
+      if (enc_up   && rs_step_cursor > 0)                          rs_step_cursor--;
+      if (enc_down && rs_step_cursor < HARMONIZE_MAX_INTERVALS)     rs_step_cursor++;
+      if (btn_valid) {
+        if (rs_step_cursor == HARMONIZE_MAX_INTERVALS) {
+          // ✓ Valider : compacter les slots non-nuls dans l'ordre (0 = inutilisé)
+          uint8_t n = 0;
+          for (uint8_t i = 0; i < HARMONIZE_MAX_INTERVALS; i++) {
+            if (rs_flux_tmp.transform.intervals[i] != 0)
+              rs_flux_tmp.transform.intervals[n++] = rs_flux_tmp.transform.intervals[i];
+          }
+          for (uint8_t i = n; i < HARMONIZE_MAX_INTERVALS; i++) rs_flux_tmp.transform.intervals[i] = 0;
+          rs_flux_tmp.transform.n_intervals = n;
+          _flux_save_and_return();
+        } else {
+          // Toggle rapide : 0 <-> +7 (quinte), affinable ensuite par appui long
+          int8_t &v = rs_flux_tmp.transform.intervals[rs_step_cursor];
+          v = (v != 0) ? 0 : 7;
+        }
+      }
+      if (long_press && rs_step_cursor < HARMONIZE_MAX_INTERVALS) {
+        rs_h_slot = rs_step_cursor;
+        rs_state = RS_FLUX_STEP4_VAL;
+      }
+      if (btn_back) { rs_state = RS_FLUX_TRANSFORM_TYPE; rs_step_cursor = TRANS_HARMONIZE; }
+      break;
+
+    // ── FLUX STEP 4 VAL — édition fine d'un intervalle ────────────
+    case RS_FLUX_STEP4_VAL:
+      if (enc_up   && rs_flux_tmp.transform.intervals[rs_h_slot] > FLUX_TRANSPOSE_MIN) rs_flux_tmp.transform.intervals[rs_h_slot]--;
+      if (enc_down && rs_flux_tmp.transform.intervals[rs_h_slot] < FLUX_TRANSPOSE_MAX) rs_flux_tmp.transform.intervals[rs_h_slot]++;
+      if (btn_valid || btn_back) {
+        rs_valid_hold_ms   = 0;
+        rs_valid_long_done = true;
+        rs_state = RS_FLUX_STEP4;
+      }
+      break;
+
   }
 
   rs_draw_current();
@@ -611,6 +805,10 @@ static void rs_draw_current() {
     case RS_FLUX_STEP1_CH:rs_draw_ch_picker(); break;
     case RS_FLUX_STEP2:   rs_draw_step2();     break;
     case RS_FLUX_STEP2_CH:rs_draw_ch_picker(); break;
+    case RS_FLUX_TRANSFORM_TYPE: rs_draw_transform_type(); break;
+    case RS_FLUX_STEP3:   rs_draw_step3();     break;
+    case RS_FLUX_STEP4:   rs_draw_step4();     break;
+    case RS_FLUX_STEP4_VAL: rs_draw_step4_val(); break;
   }
 }
 

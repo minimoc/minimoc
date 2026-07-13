@@ -250,6 +250,30 @@ void processAfterTouch(byte portSource, byte channel, byte pressure, byte source
     }
 
 // ----------------------------------------------------------------
+// Envoi d'une note (on/off) avec un offset de demi-tons, borné 0-127.
+// Partagé par TRANS_NOTE_TRANSPOSE (un seul appel, offset=transpose) et
+// TRANS_HARMONIZE (plusieurs appels : offset=0 pour la note reçue, puis un
+// appel par intervalle actif) — la même formule des deux côtés (NoteOn et
+// NoteOff) est indispensable pour que le NoteOff éteigne exactement les
+// notes envoyées par le NoteOn correspondant (à config de Flux inchangée
+// pendant que la note est tenue).
+// ----------------------------------------------------------------
+static inline void _send_offset_note_on(byte out, byte note, int8_t offset, byte velocity, byte dc, byte source) {
+    int16_t tn = (int16_t)note + offset;
+    if (tn < 0 || tn > 127) return;   // hors plage MIDI après transform : note filtrée
+    byte tnote = (byte)tn;
+    SEND_NOTE_ON(out, tnote, velocity, dc, source);
+    rec_push(source, out+1, 0x90, dc, tnote, velocity);
+}
+static inline void _send_offset_note_off(byte out, byte note, int8_t offset, byte velocity, byte dc, byte source) {
+    int16_t tn = (int16_t)note + offset;
+    if (tn < 0 || tn > 127) return;
+    byte tnote = (byte)tn;
+    SEND_NOTE_OFF(out, tnote, velocity, dc, source);
+    rec_push(source, out+1, 0x80, dc, tnote, velocity);
+}
+
+// ----------------------------------------------------------------
 // NoteOn
 // ----------------------------------------------------------------
 void handleNoteOn(byte midiIn, byte channel, byte note, byte velocity, byte source) {
@@ -257,8 +281,15 @@ void handleNoteOn(byte midiIn, byte channel, byte note, byte velocity, byte sour
         uint16_t mask = route_matrix[midiIn-1][channel-1][out];
         for (uint16_t m = mask; m; m &= m-1) {
             byte dc = __builtin_ctz(m) + 1;
-            SEND_NOTE_ON(out, note, velocity, dc, source);
-            rec_push(source, out+1, 0x90, dc, note, velocity);
+            const FluxTransform &tr = route_transform[midiIn-1][channel-1][out][dc-1];
+            if (tr.type == TRANS_HARMONIZE) {
+                _send_offset_note_on(out, note, 0, velocity, dc, source);   // note reçue, inchangée
+                for (uint8_t i = 0; i < tr.n_intervals; i++)
+                    _send_offset_note_on(out, note, tr.intervals[i], velocity, dc, source);
+            } else {
+                int8_t offset = (tr.type == TRANS_NOTE_TRANSPOSE) ? tr.transpose : 0;
+                _send_offset_note_on(out, note, offset, velocity, dc, source);
+            }
         }
     }
 }
@@ -271,8 +302,15 @@ void handleNoteOff(byte midiIn, byte channel, byte note, byte velocity, byte sou
         uint16_t mask = route_matrix[midiIn-1][channel-1][out];
         for (uint16_t m = mask; m; m &= m-1) {
             byte dc = __builtin_ctz(m) + 1;
-            SEND_NOTE_OFF(out, note, velocity, dc, source);
-            rec_push(source, out+1, 0x80, dc, note, velocity);
+            const FluxTransform &tr = route_transform[midiIn-1][channel-1][out][dc-1];
+            if (tr.type == TRANS_HARMONIZE) {
+                _send_offset_note_off(out, note, 0, velocity, dc, source);
+                for (uint8_t i = 0; i < tr.n_intervals; i++)
+                    _send_offset_note_off(out, note, tr.intervals[i], velocity, dc, source);
+            } else {
+                int8_t offset = (tr.type == TRANS_NOTE_TRANSPOSE) ? tr.transpose : 0;
+                _send_offset_note_off(out, note, offset, velocity, dc, source);
+            }
         }
     }
 }

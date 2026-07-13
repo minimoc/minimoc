@@ -1,7 +1,7 @@
 {
   "current": {
-    "weblink_version": "0.2.0",
-    "min_firmware": "v0.3.0"
+    "weblink_version": "0.3.0",
+    "min_firmware": "v0.4.0"
   },
   "archive": [
     {
@@ -9,6 +9,12 @@
       "max_firmware": "v0.2.2b",
       "path": "versions/v0.1.0/",
       "description": "Sync A-E + OFF uniquement, pas de commande version/BPM interne"
+    },
+    {
+      "weblink_version": "0.2.0",
+      "max_firmware": "v0.3.0",
+      "path": "versions/v0.2.0/",
+      "description": "Routage BASIC + FLUX (canal→canal) sans transform — avant TRANS_NOTE_TRANSPOSE / TRANS_HARMONIZE"
     }
   ]
 }

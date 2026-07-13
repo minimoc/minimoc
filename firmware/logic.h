@@ -136,16 +136,52 @@ struct FluxOutSlot { uint8_t port; uint16_t chan_mask; };
 #define FLUX_MAX_OUT 9
 #define FLUX_MAX     16
 
+// -----------------------------------------------------------------
+// TRANSFORM — traitement optionnel attaché à un Flux
+// -----------------------------------------------------------------
+// Un Flux porte AU PLUS un type de transform (pas de cumul) : TRANS_NONE,
+// TRANS_NOTE_TRANSPOSE (décalage de note) ou TRANS_HARMONIZE (empile jusqu'à
+// 4 notes supplémentaires par rapport à la note reçue).
+enum TransformType : uint8_t {
+    TRANS_NONE = 0,
+    TRANS_NOTE_TRANSPOSE,
+    TRANS_HARMONIZE,
+};
+
+#define FLUX_TRANSPOSE_MIN -24
+#define FLUX_TRANSPOSE_MAX  24
+#define HARMONIZE_MAX_INTERVALS 4
+
+struct FluxTransform {
+    uint8_t type;                                  // TransformType
+    int8_t  transpose;                              // TRANS_NOTE_TRANSPOSE : demi-tons, -24..+24
+    uint8_t n_intervals;                            // TRANS_HARMONIZE : nb d'intervalles actifs (0-4)
+    int8_t  intervals[HARMONIZE_MAX_INTERVALS];     // TRANS_HARMONIZE : demi-tons relatifs à la note reçue
+};
+
 struct Flux {
-    uint8_t     n_in;
-    uint8_t     n_out;
-    FluxInSlot  in[FLUX_MAX_IN];
-    FluxOutSlot out[FLUX_MAX_OUT];
-    bool        active;
+    uint8_t        n_in;
+    uint8_t        n_out;
+    FluxInSlot     in[FLUX_MAX_IN];
+    FluxOutSlot    out[FLUX_MAX_OUT];
+    bool           active;
+    FluxTransform  transform;   // {TRANS_NONE,0,0,{0,0,0,0}} = pas de transform
 };
 
 Flux    flux_list[FLUX_MAX];
 uint8_t flux_count = 0;
+
+// Transform à appliquer aux notes routées via [in][chan][out][chan_out].
+// Granularité au canal de sortie (pas juste [in][chan][out]) : indispensable
+// pour qu'un même Flux multi-canal (ex. A.1 → 3.1 T+0 et A.1 → 3.2 T+3, via
+// un chan_mask de sortie à 2 bits) applique un transform différent par canal
+// de sortie.
+// Alimenté uniquement par la couche FLUX (la matrice BASIC reste un pur
+// passthrough). Deux Flux actifs qui ciblent exactement le même quadruplet
+// (in, chan_in, out, chan_out) restent en collision — route_matrix ne peut
+// représenter qu'un seul message par canal de sortie, donc le dernier Flux
+// écrit gagne.
+FluxTransform route_transform[5][16][9][16] = {};
 
 // -----------------------------------------------------------------
 // recompute_route_matrix() — reconstruit route_matrix depuis BASIC + FLUX
@@ -153,6 +189,7 @@ uint8_t flux_count = 0;
 // -----------------------------------------------------------------
 inline void recompute_route_matrix() {
     memset(route_matrix, 0, sizeof(route_matrix));
+    memset(route_transform, 0, sizeof(route_transform));
 
     // Couche BASIC : passthrough canal pour chaque nœud actif
     for (uint8_t i = 0; i < 5; i++) {
@@ -178,10 +215,16 @@ inline void recompute_route_matrix() {
                     uint8_t  op    = flux_list[f].out[oi].port;
                     uint16_t omask = flux_list[f].out[oi].chan_mask;
                     if (op >= 9) continue;   // borne : évite accès hors tableau
-                    if (omask == 0)
+                    if (omask == 0) {
                         route_matrix[ip][ch][op] |= (uint16_t)(1u << ch); // passthrough
-                    else
+                        route_transform[ip][ch][op][ch] = flux_list[f].transform;
+                    } else {
                         route_matrix[ip][ch][op] |= omask; // dispatch multi-canal
+                        for (uint16_t om = omask; om; om &= om-1) {
+                            uint8_t outch = __builtin_ctz(om);
+                            route_transform[ip][ch][op][outch] = flux_list[f].transform;
+                        }
+                    }
                 }
             }
         }

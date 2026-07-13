@@ -1,19 +1,47 @@
 #pragma once
 // sd_presets.h — Presets sur carte SD
 //
-// Format v2 /PRESETS/PRESTnn.DAT :
-//   [0-7]   SdPresetHeader (magic, version=2, n_inputs, n_outputs, reserved)
+// Format v5 /PRESETS/PRESTnn.DAT :
+//   [0-7]   SdPresetHeader (magic, version=5, n_inputs, n_outputs, reserved)
 //   [8+]    route_matrix  (n_in × 16 × n_out × 2 octets) — DÉRIVÉ, reconstruit au chargement
 //   [...]   basic_matrix[5]   (10 octets)
 //   [1 oct] flux_count
-//   [...]   flux_list[0..flux_count-1] (flux_count × sizeof(Flux))
+//   [...]   flux_list[0..flux_count-1] (flux_count × sizeof(Flux), inclut transform)
 //
+// Format v4 (legacy) : flux_list avec `transpose` brut au lieu de `transform`
+// (union TransformType) → migration automatique (voir FluxV4Legacy plus bas).
+// Format v3 (legacy) : flux_list sans transform du tout → migration automatique
+// (voir FluxV3Legacy plus bas).
 // Format v1 (legacy) : route_matrix seul → migration automatique vers basic_matrix
 
 #define SD_PRESET_MAX   32
 #define SD_PRESET_DIR   "/PRESETS"
 #define SD_PRESET_MAGIC 0x4D4E4D43UL   // 'MNMC' little-endian
-#define SD_PRESET_VER   3              // v1=route_matrix, v2=+basic+flux(chan mono), v3=flux(chan_mask multi)
+#define SD_PRESET_VER   5              // v1=route_matrix, v2=+basic+flux(chan mono), v3=flux(chan_mask multi), v4=+flux.transpose, v5=+flux.transform (TransformType)
+
+// Layout figé de `struct Flux` tel qu'écrit par le firmware v3, avant l'ajout
+// d'un transform. Sert uniquement à relire les presets SD existants —
+// ne pas modifier même si `Flux` évolue encore par la suite.
+struct FluxV3Legacy {
+    uint8_t     n_in;
+    uint8_t     n_out;
+    FluxInSlot  in[FLUX_MAX_IN];
+    FluxOutSlot out[FLUX_MAX_OUT];
+    bool        active;
+};
+
+// Layout figé de `struct Flux` tel qu'écrit par le firmware v4, avant la
+// généralisation du champ `transpose` en `transform` (TransformType + union
+// de paramètres). Sert uniquement à relire les presets SD existants —
+// ne pas modifier même si `Flux` évolue encore par la suite.
+struct FluxV4Legacy {
+    uint8_t     n_in;
+    uint8_t     n_out;
+    FluxInSlot  in[FLUX_MAX_IN];
+    FluxOutSlot out[FLUX_MAX_OUT];
+    bool        active;
+    int8_t      transpose;
+};
 
 struct SdPresetHeader {
     uint32_t magic;
@@ -109,7 +137,7 @@ bool sd_preset_load(uint8_t num) {
     SdPresetHeader hdr;
     if ((size_t)f.read(&hdr, sizeof(hdr)) != sizeof(hdr) ||
         hdr.magic != SD_PRESET_MAGIC ||
-        (hdr.version != 1 && hdr.version != 3)) {
+        (hdr.version != 1 && hdr.version != 3 && hdr.version != 4 && hdr.version != 5)) {
         f.close();
         return false;
     }
@@ -136,8 +164,47 @@ bool sd_preset_load(uint8_t num) {
     if (hdr.version == 1) {
         // Migration v1 : déduire basic_matrix depuis route_matrix, pas de flux
         _migrate_route_to_basic();
-    } else {   // v3
-        // v2 : charger basic_matrix + flux
+    } else if (hdr.version == 3) {
+        // v3 : basic_matrix + flux SANS transform → migration vers Flux courant
+        f.read(basic_matrix, sizeof(basic_matrix));
+        uint8_t fc = 0;
+        f.read(&fc, 1);
+        flux_count = min(fc, (uint8_t)FLUX_MAX);
+        if (flux_count > 0) {
+            FluxV3Legacy legacy[FLUX_MAX];
+            f.read(legacy, flux_count * sizeof(FluxV3Legacy));
+            for (uint8_t i = 0; i < flux_count; i++) {
+                flux_list[i].n_in  = legacy[i].n_in;
+                flux_list[i].n_out = legacy[i].n_out;
+                memcpy(flux_list[i].in,  legacy[i].in,  sizeof(legacy[i].in));
+                memcpy(flux_list[i].out, legacy[i].out, sizeof(legacy[i].out));
+                flux_list[i].active = legacy[i].active;
+                memset(&flux_list[i].transform, 0, sizeof(FluxTransform));   // TRANS_NONE
+            }
+        }
+        recompute_route_matrix();
+    } else if (hdr.version == 4) {
+        // v4 : basic_matrix + flux avec `transpose` brut → migration vers `transform`
+        f.read(basic_matrix, sizeof(basic_matrix));
+        uint8_t fc = 0;
+        f.read(&fc, 1);
+        flux_count = min(fc, (uint8_t)FLUX_MAX);
+        if (flux_count > 0) {
+            FluxV4Legacy legacy[FLUX_MAX];
+            f.read(legacy, flux_count * sizeof(FluxV4Legacy));
+            for (uint8_t i = 0; i < flux_count; i++) {
+                flux_list[i].n_in  = legacy[i].n_in;
+                flux_list[i].n_out = legacy[i].n_out;
+                memcpy(flux_list[i].in,  legacy[i].in,  sizeof(legacy[i].in));
+                memcpy(flux_list[i].out, legacy[i].out, sizeof(legacy[i].out));
+                flux_list[i].active = legacy[i].active;
+                memset(&flux_list[i].transform, 0, sizeof(FluxTransform));
+                flux_list[i].transform.type      = (legacy[i].transpose != 0) ? TRANS_NOTE_TRANSPOSE : TRANS_NONE;
+                flux_list[i].transform.transpose = legacy[i].transpose;
+            }
+        }
+        recompute_route_matrix();
+    } else {   // v5 : basic_matrix + flux (avec transform)
         f.read(basic_matrix, sizeof(basic_matrix));
         uint8_t fc = 0;
         f.read(&fc, 1);

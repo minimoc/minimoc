@@ -26,7 +26,7 @@ boitier_ep   = 22.2;  // épaisseur du boîtier
 
 // -- Gorge --
 gorge_jeu    = 0.6;   // jeu d'insertion
-gorge_prof   = 14;    // profondeur d'encastrement du boîtier
+gorge_prof   = 9;    // profondeur d'encastrement du boîtier
 gorge_h_av   = 6.0;   // hauteur de la lèvre AVANT
                       //  GARDER SOUS 4 mm (vis à 4-5 mm du bord)
 gorge_marge  = 6.0;   // débord latéral de chaque côté = épaisseur des
@@ -39,7 +39,7 @@ ep_avant     = 6.0;   // matière DEVANT la gorge (la lèvre)
 ep_arriere   = 16.0;  // matière DERRIÈRE la gorge (lest/dossier)
                       //  AUGMENTER si le socle bascule en arrière
 
-dossier_h    = 24;    // hauteur du dossier arrière
+dossier_h    = 8;    // hauteur du dossier arrière
 
 // -- Arrondis (confort + finition) --
 arrondi_r    = 2.0;   // rayon d'arrondi des arêtes EXTÉRIEURES

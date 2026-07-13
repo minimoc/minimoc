@@ -1,4 +1,4 @@
-#define FIRMWARE_VERSION "v0.3.0"
+#define FIRMWARE_VERSION "v0.4.0"
 
 // Décommenter pour activer l'enregistrement MIDI en tâche de fond sur carte SD.
 // Désactivé : sd_tick() et MTP ne tournent pas → latence réduite, sync plus stable.

@@ -806,12 +806,12 @@ const MANUFACTURER_ID = 0x7D;
 // Bumper à chaque changement de protocole SysEx incompatible avec un firmware
 // antérieur, et archiver alors l'ancien index.html dans versions/ — voir
 // versions.json (manifest de compatibilité) et le bandeau affiché par App().
-const WEBLINK_VERSION = '0.3.0';
-// Préfixe relatif vers la racine weblink/ : '' pour ce fichier (la racine),
-// '../../' pour une copie archivée dans versions/vX.Y.Z/. Sert à tous les
+const WEBLINK_VERSION = '0.2.0';
+// Préfixe relatif vers la racine weblink/ : '' pour le fichier racine,
+// '../../' pour cette copie archivée dans versions/v0.2.0/. Sert à tous les
 // fetch/href qui doivent atteindre versions.json ou firmwares/ quelle que
 // soit la profondeur du fichier — voir memory "weblink_versioning".
-const WEBLINK_BASE = '';
+const WEBLINK_BASE = '../../';
 const N_IN   = 5;
 const N_OUT  = 9;
 const IN_LABELS  = ['A', 'B', 'C', 'D', 'E'];
@@ -866,23 +866,12 @@ function compareVersions(a, b) {
 }
 
 function encodeFluxMsg(idx, flux) {
-  // TransformType : 0=aucun 1=transpose 2=harmonize (cf. PCEditor.h)
-  const tr = flux.transform || { type: 0, transpose: 0, intervals: [0, 0, 0, 0] };
-  // Compacte les intervalles non-nuls dans l'ordre (0 = slot inutilisé) —
-  // le firmware ne lit que les n_intervals premiers, sans filtrer les trous.
-  const nonzero = (tr.intervals || []).filter(v => v);
-  const intervals = [0, 0, 0, 0];
-  nonzero.slice(0, 4).forEach((v, i) => { intervals[i] = v; });
   const data = [
     MANUFACTURER_ID, 0x0A,
     idx,
     flux.in.length,
     flux.out.length,
     1, // toujours actif
-    tr.type || 0,
-    (tr.transpose || 0) + 64,          // biaisé +64 pour rester dans 0-127 (SysEx 7 bits)
-    Math.min(nonzero.length, 4),        // n_intervals
-    ...intervals.map(v => v + 64),
   ];
   // chan_mask encodé sur 3 octets 7-bit : bits 0-6 | bits 7-13 | bits 14-15
   for (const i of flux.in) {
@@ -910,15 +899,7 @@ function fluxSummary(flux) {
     return bits.length === 1 ? `${p}:${bits[0]}` : `${p}(${bits.length})`;
   }).join(' ');
   if (!ins && !outs) return '(vide)';
-  const tr = flux.transform;
-  let trSuffix = '';
-  if (tr && tr.type === 1 && tr.transpose) {
-    trSuffix = ` (T${tr.transpose > 0 ? '+' : ''}${tr.transpose})`;
-  } else if (tr && tr.type === 2) {
-    const n = (tr.intervals || []).filter(v => v).length;
-    if (n > 0) trSuffix = ` (H×${n})`;
-  }
-  return `${ins || '?'} → ${outs || '?'}${trSuffix}`;
+  return `${ins || '?'} → ${outs || '?'}`;
 }
 
 function chanMaskLabel(mask) {
@@ -1101,39 +1082,12 @@ function ChanPickerModal({ title, initMask, onConfirm, onCancel }) {
 }
 
 // ── Flux Editor ──────────────────────────────────────────────────────────────
-const TRANSFORM_NONE      = 0;
-const TRANSFORM_TRANSPOSE = 1;
-const TRANSFORM_HARMONIZE = 2;
-const HARMONIZE_MAX_INTERVALS = 4;
-
 function FluxEditor({ editingFlux, editingIdx, onSave, onCancel }) {
   const [draft, setDraft] = useState(() => {
     if (editingFlux) return JSON.parse(JSON.stringify(editingFlux));
-    return { in: [], out: [], active: true, transform: { type: TRANSFORM_NONE, transpose: 0, intervals: [0, 0, 0, 0] } };
+    return { in: [], out: [], active: true };
   });
   const [picker, setPicker] = useState(null); // {side, port}
-
-  const transform = draft.transform || { type: TRANSFORM_NONE, transpose: 0, intervals: [0, 0, 0, 0] };
-
-  function setTransformType(type) {
-    setDraft(f => ({ ...f, transform: { ...(f.transform || {}), type,
-      transpose: (f.transform && f.transform.transpose) || 0,
-      intervals: (f.transform && f.transform.intervals) || [0, 0, 0, 0] } }));
-  }
-
-  function setTranspose(v) {
-    const clamped = Math.max(-24, Math.min(24, v));
-    setDraft(f => ({ ...f, transform: { ...f.transform, transpose: clamped } }));
-  }
-
-  function setInterval(slot, v) {
-    const clamped = Math.max(-24, Math.min(24, v));
-    setDraft(f => {
-      const intervals = [...(f.transform.intervals || [0, 0, 0, 0])];
-      intervals[slot] = clamped;
-      return { ...f, transform: { ...f.transform, intervals } };
-    });
-  }
 
   function toggleIn(portIdx) {
     setDraft(f => {
@@ -1244,51 +1198,6 @@ function FluxEditor({ editingFlux, editingIdx, onSave, onCancel }) {
           })}
         </div>
       </div>
-
-      {/* Transform : Aucun / Transpose / Harmonize (un seul actif à la fois) */}
-      <div className="flux-editor-row">
-        <div className="flux-editor-label">Transform</div>
-        <div className="port-buttons" style={{ gap: 8 }}>
-          <button className={`btn${transform.type === TRANSFORM_NONE ? ' primary' : ''}`} onClick={() => setTransformType(TRANSFORM_NONE)}>Aucun</button>
-          <button className={`btn${transform.type === TRANSFORM_TRANSPOSE ? ' primary' : ''}`} onClick={() => setTransformType(TRANSFORM_TRANSPOSE)}>Transpose</button>
-          <button className={`btn${transform.type === TRANSFORM_HARMONIZE ? ' primary' : ''}`} onClick={() => setTransformType(TRANSFORM_HARMONIZE)}>Harmonize</button>
-        </div>
-      </div>
-
-      {transform.type === TRANSFORM_TRANSPOSE && (
-        <div className="flux-editor-row">
-          <div className="flux-editor-label">Demi-tons</div>
-          <div className="port-buttons" style={{ alignItems: 'center', gap: 8 }}>
-            <button className="btn" onClick={() => setTranspose(transform.transpose - 1)} disabled={transform.transpose <= -24}>−</button>
-            <span style={{ minWidth: 40, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
-              {transform.transpose > 0 ? `+${transform.transpose}` : transform.transpose}
-            </span>
-            <button className="btn" onClick={() => setTranspose(transform.transpose + 1)} disabled={transform.transpose >= 24}>+</button>
-            {transform.transpose !== 0 && (
-              <button className="btn" onClick={() => setTranspose(0)} title="Réinitialiser">Reset</button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {transform.type === TRANSFORM_HARMONIZE && Array.from({ length: HARMONIZE_MAX_INTERVALS }).map((_, slot) => {
-        const v = (transform.intervals && transform.intervals[slot]) || 0;
-        return (
-          <div className="flux-editor-row" key={slot}>
-            <div className="flux-editor-label">Note {slot + 1}</div>
-            <div className="port-buttons" style={{ alignItems: 'center', gap: 8 }}>
-              <button className="btn" onClick={() => setInterval(slot, v - 1)} disabled={v <= -24}>−</button>
-              <span style={{ minWidth: 40, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
-                {v ? (v > 0 ? `+${v}` : v) : '--'}
-              </span>
-              <button className="btn" onClick={() => setInterval(slot, v + 1)} disabled={v >= 24}>+</button>
-              {v !== 0 && (
-                <button className="btn" onClick={() => setInterval(slot, 0)} title="Désactiver cette note">Reset</button>
-              )}
-            </div>
-          </div>
-        );
-      })}
 
       <div className="flux-editor-actions">
         <button
@@ -2112,13 +2021,6 @@ function App() {
           const n_in   = body[ptr++];
           const n_out  = body[ptr++];
           const active = body[ptr++] !== 0;
-          // TransformType : 0=aucun 1=transpose 2=harmonize (cf. PCEditor.h)
-          const type        = body[ptr++];
-          const transpose   = body[ptr++] - 64; // biaisé +64 côté firmware
-          const n_intervals = body[ptr++];
-          const intervals = [];
-          for (let i = 0; i < 4; i++) intervals.push(body[ptr++] - 64);
-          for (let i = n_intervals; i < 4; i++) intervals[i] = 0;   // slots au-delà de n_intervals : inutilisés
           // chan_mask : 3 octets 7-bit → bits 0-6 | bits 7-13 | bits 14-15
           const ins = [];
           for (let i = 0; i < n_in;  i++) {
@@ -2137,7 +2039,7 @@ function App() {
             outs.push({ port, chan_mask: lo | (mid << 7) | (top << 14) });
           }
           const fluxes = [...prev.fluxes];
-          fluxes[idx] = { in: ins, out: outs, active, transform: { type, transpose, intervals } };
+          fluxes[idx] = { in: ins, out: outs, active };
           return { ...prev, fluxes };
         }
 

@@ -1,27 +1,16 @@
 [
+  
   {
-    "version": "v0.2.0",
-    "filename": "minimoc_v0.2.0.hex",
-    "date": "2026-06-07",
-    "description": "Version 0.2.0"
+    "version": "v0.4.0",
+    "filename": "minimoc_v0.4.0.hex",
+    "date": "2026-07-13",
+    "description": "Ajout des transformateurs"
   },
   {
-    "version": "v0.2.1",
-    "filename": "minimoc_v0.2.1.hex",
-    "date": "2026-06-12",
-    "description": "Ajout BPM monitor, stabilisation OTA"
-  },
-  {
-    "version": "v0.2.2",
-    "filename": "minimoc_v0.2.2.hex",
-    "date": "2026-06-14",
-    "description": "Ajout du sync depuis le smartMirror"
-  },
-  {
-    "version": "v0.2.2a",
-    "filename": "minimoc_v0.2.2a.hex",
-    "date": "2026-06-17",
-    "description": "Essai de monitor optimisé"
+    "version": "v0.3.0",
+    "filename": "minimoc_v0.3.0.hex",
+    "date": "2026-07-11",
+    "description": "MasterSync"
   },
   {
     "version": "v0.2.2b",
@@ -30,9 +19,27 @@
     "description": "Monitor Optimsé ++"
   },
   {
-    "version": "v0.3.0",
-    "filename": "minimoc_v0.3.0.hex",
-    "date": "2026-07-11",
-    "description": "MasterSync"
+    "version": "v0.2.2a",
+    "filename": "minimoc_v0.2.2a.hex",
+    "date": "2026-06-17",
+    "description": "Essai de monitor optimisé"
+  },
+  {
+    "version": "v0.2.2",
+    "filename": "minimoc_v0.2.2.hex",
+    "date": "2026-06-14",
+    "description": "Ajout du sync depuis le smartMirror"
+  },
+  {
+    "version": "v0.2.1",
+    "filename": "minimoc_v0.2.1.hex",
+    "date": "2026-06-12",
+    "description": "Ajout BPM monitor, stabilisation OTA"
+  },
+  {
+    "version": "v0.2.0",
+    "filename": "minimoc_v0.2.0.hex",
+    "date": "2026-06-07",
+    "description": "Version 0.2.0"
   }
 ]
