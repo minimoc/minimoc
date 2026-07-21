@@ -135,13 +135,7 @@ void ui_tick() {
                || (ui_screen == UI_TRANSPORT)
                || (ui_screen == UI_CAROUSEL && carousel_anim_offset != 0);
 
-  // Laisser tourner pendant un long press en cours dans le menu ROUTAGE
-  // (sinon le timer rs_valid_hold_ms n'est jamais vérifié quand le bouton est tenu)
-  bool routing_lp = (ui_screen == UI_ROUTING)
-                 && (rs_valid_hold_ms > 0)
-                 && !rs_valid_long_done;
-
-  if (!has_io && !need_anim && !screen_just_entered && !routing_lp) return;
+  if (!has_io && !need_anim && !screen_just_entered) return;
 
   switch (ui_screen) {
 

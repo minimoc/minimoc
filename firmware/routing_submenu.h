@@ -41,8 +41,6 @@ static uint8_t rs_ch_port    = 0;   // port sélectionné pour le picker
 static bool    rs_ch_is_out  = false; // picker input(false) ou output(true)
 static uint8_t  rs_ch_cursor  = 0;   // curseur dans le picker 0-16 (16=TOUT)
 static uint8_t  rs_action_cur = 0;   // RS_FLUX_ACTION : 0=Modifier 1=Supprimer
-static uint8_t  rs_saved_port = 0xFF; // port sauvegardé avant toggle (long press recovery)
-static uint16_t rs_saved_mask = 0;   // chan_mask sauvegardé
 static uint8_t  rs_h_slot     = 0;   // RS_FLUX_STEP4_VAL : slot d'intervalle harmonize en cours d'édition (0-3)
 
 
@@ -516,31 +514,9 @@ static void _flux_save_and_return() {
   rs_cursor = rs_flux_idx;
 }
 
-// Long press detection pour RS_FLUX_STEP1/STEP2/STEP4
-static unsigned long rs_valid_hold_ms = 0;
-static bool          rs_valid_long_done = false;
-
 static void rs_draw_current();  // forward déclaration
 
 bool rs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) {
-
-  // Détection appui long sur VALID (channel picker Flux ou réglage pas grille)
-  unsigned long now = millis();
-  // Tracker le long press uniquement dans STEP1/STEP2/STEP4 (là où il fait sens).
-  // Tout autre btn_valid (MAIN, ACTION, LIST, pickers) ne démarre pas le timer.
-  if (btn_valid &&
-      (rs_state == RS_FLUX_STEP1 || rs_state == RS_FLUX_STEP2 || rs_state == RS_FLUX_STEP4)) {
-    rs_valid_hold_ms  = now;
-    rs_valid_long_done = false;
-  }
-  bool long_press = false;
-  if (rs_valid_hold_ms > 0 && !rs_valid_long_done &&
-      (now - rs_valid_hold_ms) > 700 &&
-      (rs_state == RS_FLUX_STEP1 || rs_state == RS_FLUX_STEP2 || rs_state == RS_FLUX_STEP4)) {
-    long_press = true;
-    rs_valid_long_done = true;
-    btn_valid = false;
-  }
 
   switch (rs_state) {
 
@@ -580,8 +556,6 @@ bool rs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
           rs_flux_tmp.active = true;
           rs_flux_idx        = flux_count;
           rs_step_cursor     = 0;
-          rs_valid_hold_ms   = 0;
-          rs_valid_long_done = true;
           rs_state = RS_FLUX_STEP1;
         } else {
           // Ouvrir le menu d'action Modifier / Supprimer
@@ -602,8 +576,6 @@ bool rs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
         if (rs_action_cur == 0) {
           rs_flux_tmp      = flux_list[rs_flux_idx];
           rs_step_cursor   = 0;
-          rs_valid_hold_ms  = 0;     // effacer tout timer résiduel
-          rs_valid_long_done = true;
           rs_state = RS_FLUX_STEP1;
         } else {
           // Supprimer : décaler le tableau et revenir à la liste
@@ -624,29 +596,19 @@ bool rs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
       if (enc_down && rs_step_cursor < 5) rs_step_cursor++;
       if (btn_valid) {
         if (rs_step_cursor == 5) {
-          rs_valid_hold_ms   = 0;     // éviter déclenchement parasite à l'entrée dans STEP2
-          rs_valid_long_done = true;
           rs_state = RS_FLUX_STEP2;
           rs_step_cursor = 0;
-        } else {
-          // Sauvegarder le chan_mask avant suppression (pour restauration si long press)
-          rs_saved_port = rs_step_cursor;
-          rs_saved_mask = _step1_chan(rs_step_cursor);
+        } else if (_step1_has_port(rs_step_cursor)) {
+          // Port déjà présent → reclic = retrait
           _toggle_step1_port(rs_step_cursor);
+        } else {
+          // Nouveau port → ajout (tous canaux par défaut) + ouverture directe du picker
+          _toggle_step1_port(rs_step_cursor);
+          rs_ch_port   = rs_step_cursor;
+          rs_ch_is_out = false;
+          rs_ch_cursor = 0;
+          rs_state = RS_FLUX_STEP1_CH;
         }
-      }
-      if (long_press && rs_step_cursor < 5) {
-        // Restaurer le port avec son chan_mask d'origine s'il a été retiré à T=0
-        if (!_step1_has_port(rs_step_cursor)) {
-          uint16_t mask = (rs_saved_port == rs_step_cursor) ? rs_saved_mask : 0;
-          if (rs_flux_tmp.n_in < FLUX_MAX_IN)
-            rs_flux_tmp.in[rs_flux_tmp.n_in++] = {rs_step_cursor, mask};
-        }
-        rs_saved_port = 0xFF;
-        rs_ch_port   = rs_step_cursor;
-        rs_ch_is_out = false;
-        rs_ch_cursor = 0;
-        rs_state = RS_FLUX_STEP1_CH;
       }
       if (btn_back) { rs_state = RS_FLUX_LIST; rs_cursor = rs_flux_idx; }
       break;
@@ -663,11 +625,7 @@ bool rs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
           break;
         }
       }
-      if (btn_back) {
-        rs_valid_hold_ms   = 0;
-        rs_valid_long_done = true;
-        rs_state = RS_FLUX_STEP1;
-      }
+      if (btn_back) { rs_state = RS_FLUX_STEP1; }
       break;
 
     // ── FLUX STEP 2 — sorties ────────────────────────────────────
@@ -677,29 +635,19 @@ bool rs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
       if (btn_valid) {
         if (rs_step_cursor == 9) {
           // → étape suivante : choix du type de transform
-          rs_valid_hold_ms   = 0;
-          rs_valid_long_done = true;
           rs_step_cursor = rs_flux_tmp.transform.type;   // présélectionne le type courant
           rs_state = RS_FLUX_TRANSFORM_TYPE;
-        } else {
-          // Sauvegarder le chan_mask avant suppression (pour restauration si long press)
-          rs_saved_port = rs_step_cursor;
-          rs_saved_mask = _step2_chan(rs_step_cursor);
+        } else if (_step2_has_port(rs_step_cursor)) {
+          // Port déjà présent → reclic = retrait
           _toggle_step2_port(rs_step_cursor);
+        } else {
+          // Nouveau port → ajout (passthrough par défaut) + ouverture directe du picker
+          _toggle_step2_port(rs_step_cursor);
+          rs_ch_port   = rs_step_cursor;
+          rs_ch_is_out = true;
+          rs_ch_cursor = 0;
+          rs_state = RS_FLUX_STEP2_CH;
         }
-      }
-      if (long_press && rs_step_cursor < 9) {
-        // Restaurer le port avec son chan_mask d'origine s'il a été retiré à T=0
-        if (!_step2_has_port(rs_step_cursor)) {
-          uint16_t mask = (rs_saved_port == rs_step_cursor) ? rs_saved_mask : 0;
-          if (rs_flux_tmp.n_out < FLUX_MAX_OUT)
-            rs_flux_tmp.out[rs_flux_tmp.n_out++] = {rs_step_cursor, mask};
-        }
-        rs_saved_port = 0xFF;
-        rs_ch_port   = rs_step_cursor;
-        rs_ch_is_out = true;
-        rs_ch_cursor = 0;
-        rs_state = RS_FLUX_STEP2_CH;
       }
       if (btn_back) { rs_state = RS_FLUX_STEP1; rs_step_cursor = 0; }
       break;
@@ -715,11 +663,7 @@ bool rs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
           break;
         }
       }
-      if (btn_back) {
-        rs_valid_hold_ms   = 0;
-        rs_valid_long_done = true;
-        rs_state = RS_FLUX_STEP2;
-      }
+      if (btn_back) { rs_state = RS_FLUX_STEP2; }
       break;
 
     // ── TRANSFORM TYPE — Aucun / Transpose / Harmonize ────────────
@@ -765,15 +709,15 @@ bool rs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
           for (uint8_t i = n; i < HARMONIZE_MAX_INTERVALS; i++) rs_flux_tmp.transform.intervals[i] = 0;
           rs_flux_tmp.transform.n_intervals = n;
           _flux_save_and_return();
+        } else if (rs_flux_tmp.transform.intervals[rs_step_cursor] != 0) {
+          // Slot déjà défini → reclic = retrait
+          rs_flux_tmp.transform.intervals[rs_step_cursor] = 0;
         } else {
-          // Toggle rapide : 0 <-> +7 (quinte), affinable ensuite par appui long
-          int8_t &v = rs_flux_tmp.transform.intervals[rs_step_cursor];
-          v = (v != 0) ? 0 : 7;
+          // Slot vide → valeur par défaut (+7, quinte) + ouverture directe de l'édition fine
+          rs_flux_tmp.transform.intervals[rs_step_cursor] = 7;
+          rs_h_slot = rs_step_cursor;
+          rs_state = RS_FLUX_STEP4_VAL;
         }
-      }
-      if (long_press && rs_step_cursor < HARMONIZE_MAX_INTERVALS) {
-        rs_h_slot = rs_step_cursor;
-        rs_state = RS_FLUX_STEP4_VAL;
       }
       if (btn_back) { rs_state = RS_FLUX_TRANSFORM_TYPE; rs_step_cursor = TRANS_HARMONIZE; }
       break;
@@ -782,11 +726,7 @@ bool rs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
     case RS_FLUX_STEP4_VAL:
       if (enc_up   && rs_flux_tmp.transform.intervals[rs_h_slot] > FLUX_TRANSPOSE_MIN) rs_flux_tmp.transform.intervals[rs_h_slot]--;
       if (enc_down && rs_flux_tmp.transform.intervals[rs_h_slot] < FLUX_TRANSPOSE_MAX) rs_flux_tmp.transform.intervals[rs_h_slot]++;
-      if (btn_valid || btn_back) {
-        rs_valid_hold_ms   = 0;
-        rs_valid_long_done = true;
-        rs_state = RS_FLUX_STEP4;
-      }
+      if (btn_valid || btn_back) rs_state = RS_FLUX_STEP4;
       break;
 
   }
@@ -818,6 +758,4 @@ void rs_enter() {
   rs_grid_pos   = 0;
   rs_flux_scroll= 0;
   rs_step_cursor= 0;
-  rs_valid_hold_ms   = 0;
-  rs_valid_long_done = false;
 }
