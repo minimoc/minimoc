@@ -1,13 +1,22 @@
 #pragma once
 // sd_presets.h — Presets sur carte SD
 //
-// Format v5 /PRESETS/PRESTnn.DAT :
-//   [0-7]   SdPresetHeader (magic, version=5, n_inputs, n_outputs, reserved)
+// Format v8 /PRESETS/PRESTnn.DAT :
+//   [0-7]   SdPresetHeader (magic, version=8, n_inputs, n_outputs, reserved)
 //   [8+]    route_matrix  (n_in × 16 × n_out × 2 octets) — DÉRIVÉ, reconstruit au chargement
 //   [...]   basic_matrix[5]   (10 octets)
 //   [1 oct] flux_count
 //   [...]   flux_list[0..flux_count-1] (flux_count × sizeof(Flux), inclut transform)
+//   [1 oct] gen_count
+//   [...]   gen_list[0..gen_count-1] (gen_count × sizeof(Generator), générateurs LFO/euclidien)
 //
+// Format v7 (legacy) : gen_list au layout d'avant l'ajout du type EUCLID
+// (pas de champ `type`, pas de note/euclid_steps/euclid_pulses/
+// euclid_rotation/gate_percent) → migration automatique vers `type=GEN_LFO`
+// (voir GeneratorV7Legacy plus bas).
+// Format v6 (legacy) : identique à v7 mais sans gen_count/gen_list (absents
+// du fichier) → gen_count mis à 0 au chargement, pas de struct "legacy" à
+// prévoir (section neuve, pas un champ modifié).
 // Format v5 (legacy) : flux_list avec FluxTransform sans les champs accord
 // (root_key/progression_id/bars_per_chord) → migration automatique (voir
 // FluxV5Legacy plus bas).
@@ -20,7 +29,7 @@
 #define SD_PRESET_MAX   32
 #define SD_PRESET_DIR   "/PRESETS"
 #define SD_PRESET_MAGIC 0x4D4E4D43UL   // 'MNMC' little-endian
-#define SD_PRESET_VER   6              // v1=route_matrix, v2=+basic+flux(chan mono), v3=flux(chan_mask multi), v4=+flux.transpose, v5=+flux.transform (TransformType), v6=+flux.transform accords (TRANS_CHORD_HARMONIZE)
+#define SD_PRESET_VER   8              // v1=route_matrix, v2=+basic+flux(chan mono), v3=flux(chan_mask multi), v4=+flux.transpose, v5=+flux.transform (TransformType), v6=+flux.transform accords (TRANS_CHORD_HARMONIZE), v7=+gen_count/gen_list (générateurs LFO), v8=+Generator.type (séquenceur euclidien)
 
 // Layout figé de `struct Flux` tel qu'écrit par le firmware v3, avant l'ajout
 // d'un transform. Sert uniquement à relire les presets SD existants —
@@ -64,6 +73,25 @@ struct FluxV5Legacy {
     FluxOutSlot             out[FLUX_MAX_OUT];
     bool                    active;
     FluxTransformV5Legacy   transform;
+};
+
+// Layout figé de `struct Generator` tel qu'écrit par le firmware v7, avant
+// l'ajout du type EUCLID (`type`, `note`, `euclid_steps`, `euclid_pulses`,
+// `euclid_rotation`, `gate_percent`) — à l'époque, un seul type de
+// générateur (LFO) existait donc pas de champ `type`. Sert uniquement à
+// relire les presets SD existants — ne pas modifier même si `Generator`
+// évolue encore par la suite.
+struct GeneratorV7Legacy {
+    bool        active;
+    uint8_t     waveform;
+    uint8_t     sync_mode;
+    uint16_t    rate_x10hz;
+    uint8_t     division_idx;
+    uint8_t     depth;
+    uint8_t     center;
+    uint8_t     cc_number;
+    uint8_t     n_out;
+    FluxOutSlot out[FLUX_MAX_OUT];
 };
 
 struct SdPresetHeader {
@@ -140,6 +168,9 @@ bool sd_preset_save(uint8_t num) {
     f.write(&flux_count,       1);
     if (flux_count > 0)
         f.write(flux_list, flux_count * sizeof(Flux));
+    f.write(&gen_count,        1);
+    if (gen_count > 0)
+        f.write(gen_list, gen_count * sizeof(Generator));
     f.sync();
     f.close();
     return true;
@@ -160,10 +191,16 @@ bool sd_preset_load(uint8_t num) {
     SdPresetHeader hdr;
     if ((size_t)f.read(&hdr, sizeof(hdr)) != sizeof(hdr) ||
         hdr.magic != SD_PRESET_MAGIC ||
-        (hdr.version != 1 && hdr.version != 3 && hdr.version != 4 && hdr.version != 5 && hdr.version != 6)) {
+        (hdr.version != 1 && hdr.version != 3 && hdr.version != 4 && hdr.version != 5 &&
+         hdr.version != 6 && hdr.version != 7 && hdr.version != 8)) {
         f.close();
         return false;
     }
+
+    // Générateurs : absents des formats < v7 → toujours réinitialisés avant
+    // la branche de version, puis remplis uniquement par la branche v7.
+    gen_count = 0;
+    memset(gen_list, 0, sizeof(gen_list));
 
     uint8_t cur_in  = _n_inputs();
     uint8_t cur_out = _n_outputs();
@@ -255,13 +292,63 @@ bool sd_preset_load(uint8_t num) {
             }
         }
         recompute_route_matrix();
-    } else {   // v6 : basic_matrix + flux (avec transform incluant les champs accord)
+    } else if (hdr.version == 6) {   // v6 : basic_matrix + flux (avec transform incluant les champs accord)
         f.read(basic_matrix, sizeof(basic_matrix));
         uint8_t fc = 0;
         f.read(&fc, 1);
         flux_count = min(fc, (uint8_t)FLUX_MAX);
         if (flux_count > 0)
             f.read(flux_list, flux_count * sizeof(Flux));
+        recompute_route_matrix();
+    } else if (hdr.version == 7) {
+        // v7 : basic_matrix + flux + gen_count/gen_list, gen_list au layout
+        // d'avant le type EUCLID → migration vers `type=GEN_LFO` + défauts
+        // euclidiens sûrs (non utilisés puisque type reste LFO).
+        f.read(basic_matrix, sizeof(basic_matrix));
+        uint8_t fc = 0;
+        f.read(&fc, 1);
+        flux_count = min(fc, (uint8_t)FLUX_MAX);
+        if (flux_count > 0)
+            f.read(flux_list, flux_count * sizeof(Flux));
+        uint8_t gc = 0;
+        f.read(&gc, 1);
+        gen_count = min(gc, (uint8_t)GEN_MAX);
+        if (gen_count > 0) {
+            GeneratorV7Legacy legacy[GEN_MAX];
+            f.read(legacy, gen_count * sizeof(GeneratorV7Legacy));
+            for (uint8_t i = 0; i < gen_count; i++) {
+                memset(&gen_list[i], 0, sizeof(Generator));
+                gen_list[i].type         = GEN_LFO;
+                gen_list[i].active       = legacy[i].active;
+                gen_list[i].waveform     = legacy[i].waveform;
+                gen_list[i].sync_mode    = legacy[i].sync_mode;
+                gen_list[i].rate_x10hz   = legacy[i].rate_x10hz;
+                gen_list[i].division_idx = legacy[i].division_idx;
+                gen_list[i].depth        = legacy[i].depth;
+                gen_list[i].center       = legacy[i].center;
+                gen_list[i].cc_number    = legacy[i].cc_number;
+                gen_list[i].note            = 60;
+                gen_list[i].euclid_steps    = 8;
+                gen_list[i].euclid_pulses   = 3;
+                gen_list[i].euclid_rotation = 0;
+                gen_list[i].gate_percent    = 50;
+                gen_list[i].n_out = legacy[i].n_out;
+                memcpy(gen_list[i].out, legacy[i].out, sizeof(legacy[i].out));
+            }
+        }
+        recompute_route_matrix();
+    } else {   // v8 : basic_matrix + flux + gen_count/gen_list (LFO + euclidien)
+        f.read(basic_matrix, sizeof(basic_matrix));
+        uint8_t fc = 0;
+        f.read(&fc, 1);
+        flux_count = min(fc, (uint8_t)FLUX_MAX);
+        if (flux_count > 0)
+            f.read(flux_list, flux_count * sizeof(Flux));
+        uint8_t gc = 0;
+        f.read(&gc, 1);
+        gen_count = min(gc, (uint8_t)GEN_MAX);
+        if (gen_count > 0)
+            f.read(gen_list, gen_count * sizeof(Generator));
         recompute_route_matrix();
     }
 

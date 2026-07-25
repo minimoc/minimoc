@@ -1,10 +1,11 @@
 #pragma once
-// routing_submenu.h — IHM de routage hybride BASIC + FLUX
+// routing_submenu.h — IHM de routage hybride BASIC + FLUX + GENERATEURS
 //
 // États :
-//   RS_MAIN          : menu principal (MATRICE / FLUX / CH10)
+//   RS_MAIN          : menu principal (MATRICE / FLUX / GENERATEURS)
 //   RS_BASIC_GRID    : grille 5×9 interactive
 //   RS_FLUX_LIST     : liste des flux + [+] nouveau
+//   RS_GENERATORS    : délégation complète à generators_submenu.h (gs_*)
 //   RS_FLUX_STEP1    : sélection ports d'entrée + canaux
 //   RS_FLUX_STEP1_CH : picker canaux entrée (overlay)
 //   RS_FLUX_STEP2    : sélection ports de sortie + canaux
@@ -33,6 +34,7 @@ enum RoutingSubState {
   RS_FLUX_STEP5,     // accords : tonique
   RS_FLUX_STEP6,     // accords : progression
   RS_FLUX_STEP7,     // accords : mesures par accord
+  RS_GENERATORS,     // délégation à generators_submenu.h (gs_*)
 };
 
 static RoutingSubState rs_state = RS_MAIN;
@@ -52,13 +54,12 @@ static uint8_t  rs_root_scroll = 0;  // RS_FLUX_STEP5 : défilement liste des 12
 static uint8_t  rs_prog_scroll = 0;  // RS_FLUX_STEP6 : défilement liste des progressions
 
 
-// Étiquettes
-static const char* INPUT_LABELS[]  = { "A","B","C","D","E" };
-static const char* OUTPUT_LABELS[] = { "1","2","3","4","5","6","7","8","9" };
+// Étiquettes : INPUT_LABELS/OUTPUT_LABELS déplacées dans logic.h (réutilisées
+// par generators_submenu.h, inclus avant ce fichier).
 
 // ── RS_MAIN ───────────────────────────────────────────────────────
-static const char* RS_MAIN_ITEMS[] = { "MATRICE", "FLUX" };
-#define RS_MAIN_COUNT 2
+static const char* RS_MAIN_ITEMS[] = { "MATRICE", "FLUX", "GENERATEURS" };
+#define RS_MAIN_COUNT 3
 
 void rs_draw_main() {
   u8g2.clearBuffer();
@@ -67,11 +68,12 @@ void rs_draw_main() {
   u8g2.drawHLine(0, 18, SCREEN_W);
   u8g2.setFont(UI_FONT_BODY);
   for (uint8_t i = 0; i < RS_MAIN_COUNT; i++) {
-    int y = 36 + i * 14;
+    int y = 32 + i * 12;
     char buf[20];
-    if (i == 1) snprintf(buf, sizeof(buf), "FLUX  (%u)", flux_count);
-    else        strncpy(buf, RS_MAIN_ITEMS[i], sizeof(buf));
-    if (i == rs_cursor) { u8g2.drawBox(0,y-10,SCREEN_W,13); u8g2.setDrawColor(0); }
+    if      (i == 1) snprintf(buf, sizeof(buf), "FLUX  (%u)", flux_count);
+    else if (i == 2) snprintf(buf, sizeof(buf), "GENERATEURS (%u)", gen_count);
+    else             strncpy(buf, RS_MAIN_ITEMS[i], sizeof(buf));
+    if (i == rs_cursor) { u8g2.drawBox(0,y-9,SCREEN_W,12); u8g2.setDrawColor(0); }
     u8g2.drawStr(8, y, buf);
     u8g2.setDrawColor(1);
   }
@@ -624,11 +626,19 @@ bool rs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
       if (enc_up   && rs_cursor > 0) rs_cursor--;
       if (enc_down && rs_cursor < RS_MAIN_COUNT-1) rs_cursor++;
       if (btn_valid) {
-        if (rs_cursor == 0) { rs_state = RS_BASIC_GRID; rs_grid_pos = 0; }
-        else                { rs_state = RS_FLUX_LIST; rs_cursor = 0; rs_flux_scroll = 0; }
+        if      (rs_cursor == 0) { rs_state = RS_BASIC_GRID; rs_grid_pos = 0; }
+        else if (rs_cursor == 1) { rs_state = RS_FLUX_LIST; rs_cursor = 0; rs_flux_scroll = 0; }
+        else                     { gs_enter(); gs_draw_current(); rs_state = RS_GENERATORS; }   // dessin immédiat : rs_draw_current() ne redessine PAS RS_GENERATORS (évite un double sendBuffer() à chaque tick suivant, cf. plus bas), donc sans cet appel l'écran ne s'actualiserait qu'au prochain input
       }
       if (btn_back) return true;
       break;
+
+    // ── GENERATEURS — délégation complète à generators_submenu.h ─
+    case RS_GENERATORS: {
+      bool done = gs_handle_input(enc_up, enc_down, btn_valid, btn_back);
+      if (done) { rs_state = RS_MAIN; rs_cursor = 2; }
+      break;
+    }
 
     // ── BASIC GRID ───────────────────────────────────────────────
     case RS_BASIC_GRID:
@@ -888,6 +898,10 @@ static void rs_draw_current() {
     case RS_FLUX_STEP5:   rs_draw_step5();     break;
     case RS_FLUX_STEP6:   rs_draw_step6();     break;
     case RS_FLUX_STEP7:   rs_draw_step7();     break;
+    // RS_GENERATORS : gs_handle_input() a déjà dessiné l'écran courant en
+    // interne (gs_draw_current()) avant de retourner — rien à refaire ici,
+    // sauf transition vers RS_MAIN qui redessine rs_draw_main() normalement.
+    case RS_GENERATORS:   break;
   }
 }
 

@@ -937,6 +937,75 @@ function chanMaskLabel(mask) {
   return `×${bits.length}ch`;
 }
 
+// ── Générateurs (LFO / Euclidien) ───────────────────────────────────────────
+// Doit rester synchronisé avec Generator/GeneratorType dans firmware/logic.h
+// et le protocole opcodes 0x12/0x13 dans firmware/PCEditor.h.
+const GEN_LFO = 0, GEN_EUCLID = 1;
+const LFO_SYNC_FREE = 0, LFO_SYNC_CLOCK = 1;
+const LFO_WAVEFORM_LABELS = ['Triangle', 'Sinus', 'Carré', 'Scie', 'Aléatoire'];
+const LFO_WAVEFORM_SHORT  = ['Tri', 'Sin', 'Car', 'Sci', 'Ale'];
+const LFO_DIVISIONS = [
+  { label: '1/16', ticks: 6 }, { label: '1/8', ticks: 12 }, { label: '1/4', ticks: 24 },
+  { label: '1/2', ticks: 48 }, { label: '1', ticks: 96 }, { label: '2', ticks: 192 }, { label: '4', ticks: 384 },
+];
+const GEN_MAX = 4;
+const EUCLID_STEPS_MAX = 16;
+const LFO_RATE_X10HZ_MIN = 1;    // 0.1 Hz
+const LFO_RATE_X10HZ_MAX = 500;  // 50.0 Hz
+
+function defaultGenerator() {
+  return {
+    type: GEN_LFO, active: true, waveform: 0, sync_mode: LFO_SYNC_FREE, rate_x10hz: 10,
+    division_idx: 2, depth: 63, center: 64, cc_number: 1, note: 60,
+    euclid_steps: 8, euclid_pulses: 3, euclid_rotation: 0, gate_percent: 50, out: [],
+  };
+}
+
+function encodeGeneratorMsg(idx, gen) {
+  const rate = gen.rate_x10hz || 10;
+  const data = [
+    MANUFACTURER_ID, 0x12,
+    idx,
+    gen.type || 0,
+    gen.active === false ? 0 : 1,
+    gen.waveform || 0,
+    gen.sync_mode || 0,
+    rate & 0x7F, (rate >> 7) & 0x7F,          // rate_x10hz : 2 octets 7-bit (comme le BPM)
+    gen.division_idx || 0,
+    gen.depth || 0,
+    gen.center || 0,
+    gen.cc_number || 0,
+    gen.note || 0,
+    gen.euclid_steps || 8,
+    gen.euclid_pulses || 0,
+    gen.euclid_rotation || 0,
+    gen.gate_percent || 50,
+    gen.out.length,
+  ];
+  // chan_mask encodé sur 3 octets 7-bit : bits 0-6 | bits 7-13 | bits 14-15
+  for (const o of gen.out) {
+    data.push(o.port, o.chan_mask & 0x7F, (o.chan_mask >> 7) & 0x7F, (o.chan_mask >> 14) & 0x03);
+  }
+  return sysexMsg(data);
+}
+
+function generatorSummary(g) {
+  const rateOrDiv = g.sync_mode === LFO_SYNC_CLOCK
+    ? (LFO_DIVISIONS[g.division_idx] || LFO_DIVISIONS[2]).label
+    : `${(g.rate_x10hz / 10).toFixed(1)}Hz`;
+  const head = g.type === GEN_EUCLID
+    ? `Euc ${g.euclid_pulses}/${g.euclid_steps} ${rateOrDiv} N${g.note}`
+    : `${LFO_WAVEFORM_SHORT[g.waveform] || '?'} ${rateOrDiv} CC${g.cc_number}`;
+  const outs = (g.out || []).map(o => {
+    const p = o.port + 1;
+    if (!o.chan_mask) return `${p}:0c`;   // ne devrait pas arriver (élagué à l'édition) — visible si ça arrive quand même
+    const bits = [];
+    for (let b = 0; b < 16; b++) if (o.chan_mask & (1 << b)) bits.push(b + 1);
+    return bits.length === 1 ? `${p}:${bits[0]}` : `${p}(${bits.length})`;
+  }).join(' ');
+  return `${head} → ${outs || '?'}`;
+}
+
 // ── Intel HEX + OTA WebSerial helpers ────────────────────────────────────────
 
 function parseIntelHex(text) {
@@ -1060,6 +1129,7 @@ function makeDefaultState() {
   return {
     basicMatrix: Array(N_IN).fill(0),
     fluxes:      [],
+    generators:  [],
     syncMaster:  0x7F,
     hostMode:     0,
     portSlot:     [0, 1, 2, 0, 1, 2],
@@ -1071,7 +1141,81 @@ function makeDefaultState() {
 }
 
 // ── Channel Picker Modal ─────────────────────────────────────────────────────
-function ChanPickerModal({ title, initMask, onConfirm, onCancel }) {
+// allowAll : Flux utilise chan_mask=0 comme "passthrough" (bouton ALL) —
+// un Générateur n'a pas de canal source à passthrough (0 canal = rien
+// envoyé), donc GeneratorEditor passe allowAll={false} pour masquer ce bouton.
+// ── Appui maintenu (+/-) : un pas immédiat, puis répétition continue tant que
+// le bouton reste enfoncé. Mécanisme partagé par tous les steppers de l'appli
+// (BPM, transpose, harmonize, générateurs...) — voir Stepper ci-dessous pour
+// l'usage courant, ou useHoldRepeat() directement pour un cas sur-mesure
+// (ex. le control BPM, qui a son propre layout/CSS).
+function useHoldRepeat(delayMs = 350, repeatMs = 90) {
+  const ref = useRef({ timeout: null, interval: null });
+
+  function stop() {
+    clearTimeout(ref.current.timeout);
+    clearInterval(ref.current.interval);
+    ref.current.timeout  = null;
+    ref.current.interval = null;
+  }
+
+  // fn doit lire l'état le plus récent via la forme fonctionnelle du setState
+  // qu'elle appelle (setXxx(prev => ...)) — sinon, comme fn est capturée une
+  // seule fois par setInterval, les répétitions rejoueraient toutes le même
+  // pas figé au lieu d'accumuler (cf. commentaire historique sur le BPM).
+  function start(fn) {
+    fn();
+    stop();
+    ref.current.timeout = setTimeout(() => {
+      ref.current.interval = setInterval(fn, repeatMs);
+    }, delayMs);
+  }
+
+  // Coupe la répétition si le pointeur quitte la fenêtre encore enfoncé (drag hors bouton, etc.)
+  useEffect(() => {
+    window.addEventListener('mouseup', stop);
+    window.addEventListener('touchend', stop);
+    return () => {
+      window.removeEventListener('mouseup', stop);
+      window.removeEventListener('touchend', stop);
+      stop();
+    };
+  }, []);
+
+  return { start, stop };
+}
+
+// ── Stepper générique −/valeur/+ avec appui maintenu ────────────────────────
+// onStep(delta) reçoit ±1 à chaque pas ; l'appelant est responsable d'utiliser
+// la forme fonctionnelle de son setState pour rester correct sous répétition
+// (cf. useHoldRepeat ci-dessus).
+function Stepper({ value, onStep, min, max, format, width = 40, children }) {
+  const { start, stop } = useHoldRepeat();
+  const dec = () => onStep(-1);
+  const inc = () => onStep(1);
+  return (
+    <div className="port-buttons" style={{ alignItems: 'center', gap: 8 }}>
+      <button
+        className="btn"
+        disabled={value <= min}
+        onMouseDown={() => start(dec)} onMouseUp={stop} onMouseLeave={stop}
+        onTouchStart={e => { e.preventDefault(); start(dec); }} onTouchEnd={stop}
+      >−</button>
+      <span style={{ minWidth: width, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
+        {format ? format(value) : value}
+      </span>
+      <button
+        className="btn"
+        disabled={value >= max}
+        onMouseDown={() => start(inc)} onMouseUp={stop} onMouseLeave={stop}
+        onTouchStart={e => { e.preventDefault(); start(inc); }} onTouchEnd={stop}
+      >+</button>
+      {children}
+    </div>
+  );
+}
+
+function ChanPickerModal({ title, initMask, onConfirm, onCancel, allowAll = true }) {
   const [mask, setMask] = useState(initMask);
   const allOff = mask === 0;
 
@@ -1082,12 +1226,14 @@ function ChanPickerModal({ title, initMask, onConfirm, onCancel }) {
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-title">{title}</div>
         <div className="ch-grid">
-          <button
-            className={`ch-all-btn${allOff ? ' on' : ''}`}
-            onClick={() => setMask(0)}
-          >
-            ALL — passthrough (aucun filtre)
-          </button>
+          {allowAll && (
+            <button
+              className={`ch-all-btn${allOff ? ' on' : ''}`}
+              onClick={() => setMask(0)}
+            >
+              ALL — passthrough (aucun filtre)
+            </button>
+          )}
           {Array.from({ length: 16 }, (_, i) => (
             <button
               key={i}
@@ -1169,6 +1315,26 @@ function FluxEditor({ editingFlux, editingIdx, onSave, onCancel }) {
     setDraft(f => ({ ...f, transform: { ...f.transform, transpose: clamped } }));
   }
 
+  // Forme fonctionnelle (lit "f", pas "transform" via la fermeture) —
+  // indispensable pour l'appui maintenu (cf. useHoldRepeat()).
+  function stepTranspose(delta) {
+    setDraft(f => ({ ...f, transform: { ...f.transform,
+      transpose: Math.max(-24, Math.min(24, f.transform.transpose + delta)) } }));
+  }
+
+  function stepInterval(slot, delta) {
+    setDraft(f => {
+      const intervals = [...(f.transform.intervals || [0, 0, 0, 0])];
+      intervals[slot] = Math.max(-24, Math.min(24, intervals[slot] + delta));
+      return { ...f, transform: { ...f.transform, intervals } };
+    });
+  }
+
+  function stepBarsPerChord(delta) {
+    setDraft(f => ({ ...f, transform: { ...f.transform,
+      bars_per_chord: Math.max(CHORD_BARS_MIN, Math.min(CHORD_BARS_MAX, (f.transform.bars_per_chord || CHORD_BARS_DEFAULT) + delta)) } }));
+  }
+
   function setInterval(slot, v) {
     const clamped = Math.max(-24, Math.min(24, v));
     setDraft(f => {
@@ -1186,11 +1352,6 @@ function FluxEditor({ editingFlux, editingIdx, onSave, onCancel }) {
   function setProgressionId(v) {
     const clamped = Math.max(0, Math.min(PROGRESSION_LABELS.length - 1, v));
     setDraft(f => ({ ...f, transform: { ...f.transform, progression_id: clamped } }));
-  }
-
-  function setBarsPerChord(v) {
-    const clamped = Math.max(CHORD_BARS_MIN, Math.min(CHORD_BARS_MAX, v));
-    setDraft(f => ({ ...f, transform: { ...f.transform, bars_per_chord: clamped } }));
   }
 
   function toggleIn(portIdx) {
@@ -1317,16 +1478,14 @@ function FluxEditor({ editingFlux, editingIdx, onSave, onCancel }) {
       {transform.type === TRANSFORM_TRANSPOSE && (
         <div className="flux-editor-row">
           <div className="flux-editor-label">Demi-tons</div>
-          <div className="port-buttons" style={{ alignItems: 'center', gap: 8 }}>
-            <button className="btn" onClick={() => setTranspose(transform.transpose - 1)} disabled={transform.transpose <= -24}>−</button>
-            <span style={{ minWidth: 40, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
-              {transform.transpose > 0 ? `+${transform.transpose}` : transform.transpose}
-            </span>
-            <button className="btn" onClick={() => setTranspose(transform.transpose + 1)} disabled={transform.transpose >= 24}>+</button>
+          <Stepper
+            value={transform.transpose} onStep={stepTranspose} min={-24} max={24}
+            format={v => v > 0 ? `+${v}` : v}
+          >
             {transform.transpose !== 0 && (
               <button className="btn" onClick={() => setTranspose(0)} title="Réinitialiser">Reset</button>
             )}
-          </div>
+          </Stepper>
         </div>
       )}
 
@@ -1335,16 +1494,14 @@ function FluxEditor({ editingFlux, editingIdx, onSave, onCancel }) {
         return (
           <div className="flux-editor-row" key={slot}>
             <div className="flux-editor-label">Note {slot + 1}</div>
-            <div className="port-buttons" style={{ alignItems: 'center', gap: 8 }}>
-              <button className="btn" onClick={() => setInterval(slot, v - 1)} disabled={v <= -24}>−</button>
-              <span style={{ minWidth: 40, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
-                {v ? (v > 0 ? `+${v}` : v) : '--'}
-              </span>
-              <button className="btn" onClick={() => setInterval(slot, v + 1)} disabled={v >= 24}>+</button>
+            <Stepper
+              value={v} onStep={delta => stepInterval(slot, delta)} min={-24} max={24}
+              format={v => v ? (v > 0 ? `+${v}` : v) : '--'}
+            >
               {v !== 0 && (
                 <button className="btn" onClick={() => setInterval(slot, 0)} title="Désactiver cette note">Reset</button>
               )}
-            </div>
+            </Stepper>
           </div>
         );
       })}
@@ -1377,13 +1534,10 @@ function FluxEditor({ editingFlux, editingIdx, onSave, onCancel }) {
           </div>
           <div className="flux-editor-row">
             <div className="flux-editor-label">Mesures/accord</div>
-            <div className="port-buttons" style={{ alignItems: 'center', gap: 8 }}>
-              <button className="btn" onClick={() => setBarsPerChord((transform.bars_per_chord || CHORD_BARS_DEFAULT) - 1)} disabled={(transform.bars_per_chord || CHORD_BARS_DEFAULT) <= CHORD_BARS_MIN}>−</button>
-              <span style={{ minWidth: 40, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
-                {transform.bars_per_chord || CHORD_BARS_DEFAULT}
-              </span>
-              <button className="btn" onClick={() => setBarsPerChord((transform.bars_per_chord || CHORD_BARS_DEFAULT) + 1)} disabled={(transform.bars_per_chord || CHORD_BARS_DEFAULT) >= CHORD_BARS_MAX}>+</button>
-            </div>
+            <Stepper
+              value={transform.bars_per_chord || CHORD_BARS_DEFAULT} onStep={stepBarsPerChord}
+              min={CHORD_BARS_MIN} max={CHORD_BARS_MAX}
+            />
           </div>
         </>
       )}
@@ -1408,6 +1562,215 @@ function FluxEditor({ editingFlux, editingIdx, onSave, onCancel }) {
         <ChanPickerModal
           title={`Canaux — ${picker.side === 'in' ? 'Entrée ' + IN_LABELS[picker.port] : 'Sortie ' + OUT_LABELS[picker.port]}`}
           initMask={pickerEntry ? pickerEntry.chan_mask : 0}
+          onConfirm={applyMask}
+          onCancel={() => setPicker(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Generator Editor ─────────────────────────────────────────────────────────
+function GeneratorEditor({ editingGenerator, editingIdx, onSave, onCancel }) {
+  const [draft, setDraft] = useState(() =>
+    editingGenerator ? JSON.parse(JSON.stringify(editingGenerator)) : defaultGenerator()
+  );
+  const [picker, setPicker] = useState(null); // {port}
+
+  function set(field, value) { setDraft(g => ({ ...g, [field]: value })); }   // sélecteurs (type/waveform/sync_mode/division) — pas d'appui maintenu
+
+  // Formes fonctionnelles (lisent "g", pas "draft" via la fermeture) —
+  // indispensable pour l'appui maintenu (cf. useHoldRepeat()/Stepper).
+  function stepRate(delta)     { setDraft(g => ({ ...g, rate_x10hz: Math.max(LFO_RATE_X10HZ_MIN, Math.min(LFO_RATE_X10HZ_MAX, g.rate_x10hz + delta)) })); }
+  function stepDepth(delta)    { setDraft(g => ({ ...g, depth: Math.max(0, Math.min(63, g.depth + delta)) })); }
+  function stepCenter(delta)   { setDraft(g => ({ ...g, center: Math.max(0, Math.min(127, g.center + delta)) })); }
+  function stepCC(delta)       { setDraft(g => ({ ...g, cc_number: Math.max(0, Math.min(127, g.cc_number + delta)) })); }
+  function stepNote(delta)     { setDraft(g => ({ ...g, note: Math.max(0, Math.min(127, g.note + delta)) })); }
+  function stepGate(delta)     { setDraft(g => ({ ...g, gate_percent: Math.max(1, Math.min(100, g.gate_percent + delta)) })); }
+  function stepPulses(delta)   { setDraft(g => ({ ...g, euclid_pulses: Math.max(0, Math.min(g.euclid_steps, g.euclid_pulses + delta)) })); }
+  function stepRotation(delta) { setDraft(g => ({ ...g, euclid_rotation: Math.max(0, Math.min(Math.max(0, g.euclid_steps - 1), g.euclid_rotation + delta)) })); }
+
+  // Changer le nombre de pas garde pulses/rotation dans les nouvelles bornes
+  // — même geste que GS_STEPS côté firmware (generators_submenu.h).
+  function stepSteps(delta) {
+    setDraft(g => {
+      const steps = Math.max(1, Math.min(EUCLID_STEPS_MAX, g.euclid_steps + delta));
+      return {
+        ...g, euclid_steps: steps,
+        euclid_pulses: Math.min(g.euclid_pulses, steps),
+        euclid_rotation: Math.min(g.euclid_rotation, steps - 1),
+      };
+    });
+  }
+
+  function toggleOut(portIdx) {
+    setDraft(g => {
+      const has = g.out.some(x => x.port === portIdx);
+      return has
+        ? { ...g, out: g.out.filter(x => x.port !== portIdx) }
+        : { ...g, out: [...g.out, { port: portIdx, chan_mask: 0 }] };
+    });
+  }
+
+  function openPicker(port) { setPicker({ port }); }
+
+  // Contrairement à Flux, chan_mask=0 n'a pas de sens pour un générateur (pas
+  // de canal source à "passthrough" : 0 canal = rien envoyé) — si le picker
+  // se ferme sans qu'aucun canal soit coché, le port est retiré plutôt que de
+  // garder une entrée fantôme (même logique que generators_submenu.h côté
+  // firmware, cf. _gs_prune_empty_outs()).
+  function applyMask(mask) {
+    const port = picker.port;
+    setPicker(null);
+    setDraft(g => {
+      if (mask === 0) return { ...g, out: g.out.filter(x => x.port !== port) };
+      return { ...g, out: g.out.map(x => x.port === port ? { ...x, chan_mask: mask } : x) };
+    });
+  }
+
+  const pickerEntry = picker ? draft.out.find(x => x.port === picker.port) : null;
+  const valid = draft.out.length > 0 && draft.out.every(o => o.chan_mask !== 0);
+
+  return (
+    <div className="flux-editor">
+      <div className="flux-editor-title">
+        {editingIdx === null ? 'Nouveau générateur' : `Modifier L${editingIdx + 1}`}
+      </div>
+
+      {/* Type */}
+      <div className="flux-editor-row">
+        <div className="flux-editor-label">Type</div>
+        <div className="port-buttons" style={{ gap: 8 }}>
+          <button className={`btn${draft.type === GEN_LFO ? ' primary' : ''}`} onClick={() => set('type', GEN_LFO)}>LFO</button>
+          <button className={`btn${draft.type === GEN_EUCLID ? ' primary' : ''}`} onClick={() => set('type', GEN_EUCLID)}>Euclidien</button>
+        </div>
+      </div>
+
+      {draft.type === GEN_LFO && (
+        <div className="flux-editor-row">
+          <div className="flux-editor-label">Forme d'onde</div>
+          <div className="port-buttons" style={{ gap: 8, flexWrap: 'wrap' }}>
+            {LFO_WAVEFORM_LABELS.map((lbl, i) => (
+              <button key={i} className={`btn${draft.waveform === i ? ' primary' : ''}`} onClick={() => set('waveform', i)}>{lbl}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Synchro — partagée LFO/Euclidien */}
+      <div className="flux-editor-row">
+        <div className="flux-editor-label">Synchro</div>
+        <div className="port-buttons" style={{ gap: 8 }}>
+          <button className={`btn${draft.sync_mode === LFO_SYNC_FREE ? ' primary' : ''}`} onClick={() => set('sync_mode', LFO_SYNC_FREE)}>Libre (Hz)</button>
+          <button className={`btn${draft.sync_mode === LFO_SYNC_CLOCK ? ' primary' : ''}`} onClick={() => set('sync_mode', LFO_SYNC_CLOCK)}>Synchro</button>
+        </div>
+      </div>
+
+      {draft.sync_mode === LFO_SYNC_FREE ? (
+        <div className="flux-editor-row">
+          <div className="flux-editor-label">Fréquence</div>
+          <Stepper
+            value={draft.rate_x10hz} onStep={stepRate} min={LFO_RATE_X10HZ_MIN} max={LFO_RATE_X10HZ_MAX}
+            format={v => `${(v / 10).toFixed(1)} Hz`} width={60}
+          />
+        </div>
+      ) : (
+        <div className="flux-editor-row">
+          <div className="flux-editor-label">Division</div>
+          <select value={draft.division_idx} onChange={e => set('division_idx', parseInt(e.target.value, 10))}>
+            {LFO_DIVISIONS.map((d, i) => <option key={i} value={i}>{d.label}</option>)}
+          </select>
+        </div>
+      )}
+
+      {draft.type === GEN_LFO ? (
+        <>
+          <div className="flux-editor-row">
+            <div className="flux-editor-label">Amplitude</div>
+            <Stepper value={draft.depth} onStep={stepDepth} min={0} max={63} />
+          </div>
+          <div className="flux-editor-row">
+            <div className="flux-editor-label">Valeur centrale</div>
+            <Stepper value={draft.center} onStep={stepCenter} min={0} max={127} />
+          </div>
+          <div className="flux-editor-row">
+            <div className="flux-editor-label">Numéro CC</div>
+            <Stepper value={draft.cc_number} onStep={stepCC} min={0} max={127} />
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flux-editor-row">
+            <div className="flux-editor-label">Note</div>
+            <Stepper value={draft.note} onStep={stepNote} min={0} max={127} />
+          </div>
+          <div className="flux-editor-row">
+            <div className="flux-editor-label">Pas</div>
+            <Stepper value={draft.euclid_steps} onStep={stepSteps} min={1} max={EUCLID_STEPS_MAX} />
+          </div>
+          <div className="flux-editor-row">
+            <div className="flux-editor-label">Pulses</div>
+            <Stepper value={draft.euclid_pulses} onStep={stepPulses} min={0} max={draft.euclid_steps} />
+          </div>
+          <div className="flux-editor-row">
+            <div className="flux-editor-label">Rotation</div>
+            <Stepper value={draft.euclid_rotation} onStep={stepRotation} min={0} max={Math.max(0, draft.euclid_steps - 1)} />
+          </div>
+          <div className="flux-editor-row">
+            <div className="flux-editor-label">Gate</div>
+            <Stepper value={draft.gate_percent} onStep={stepGate} min={1} max={100} format={v => `${v}%`} width={50} />
+          </div>
+        </>
+      )}
+
+      {/* Sorties — pas d'entrée, contrairement à un Flux (le générateur EST la source) */}
+      <div className="flux-editor-row">
+        <div className="flux-editor-label">Sorties</div>
+        <div className="port-buttons">
+          {OUT_LABELS.map((lbl, i) => {
+            const entry = draft.out.find(x => x.port === i);
+            const on    = !!entry;
+            return (
+              <div key={i} className="port-btn-wrap">
+                <button className={`port-btn${on ? ' on' : ''}`} onClick={() => toggleOut(i)}>{lbl}</button>
+                {on ? (
+                  <button
+                    className={`chan-hint-btn${entry.chan_mask ? ' set' : ''}`}
+                    onClick={() => openPicker(i)}
+                    title="Choisir le(s) canal/canaux"
+                  >
+                    {entry.chan_mask ? chanMaskLabel(entry.chan_mask) : '?'}
+                  </button>
+                ) : (
+                  <div className="chan-hint-spacer" />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flux-editor-actions">
+        <button
+          className="btn primary"
+          disabled={!valid}
+          onClick={() => onSave(draft)}
+        >
+          Valider
+        </button>
+        <button className="btn" onClick={onCancel}>Annuler</button>
+        {!valid && (
+          <span style={{ fontSize: 12, color: '#9ca3af', alignSelf: 'center' }}>
+            Sélectionnez au moins une sortie avec au moins un canal
+          </span>
+        )}
+      </div>
+
+      {picker && (
+        <ChanPickerModal
+          title={`Canaux — Sortie ${OUT_LABELS[picker.port]}`}
+          initMask={pickerEntry ? pickerEntry.chan_mask : 0}
+          allowAll={false}
           onConfirm={applyMask}
           onCancel={() => setPicker(null)}
         />
@@ -2074,6 +2437,8 @@ function App() {
   const [section,     setSection]     = useState('sync');
   const [showEditor,  setShowEditor]  = useState(false);
   const [editingIdx,  setEditingIdx]  = useState(null);
+  const [showGenEditor, setShowGenEditor] = useState(false);
+  const [editingGenIdx, setEditingGenIdx] = useState(null);
   const [toast,       setToast]       = useState(null);
   const [presetModal, setPresetModal] = useState(null); // {mode:'load'|'save', selected:n}
 
@@ -2201,8 +2566,16 @@ function App() {
           return { ...prev, basicMatrix: mat };
         }
 
-        case 0x0B: // flux count — reset list
-          return { ...prev, fluxes: [] };
+        case 0x0B: { // flux count — tronque à la nouvelle longueur, sans tout effacer
+          // Le heartbeat (toutes les 500ms) redemande systématiquement ce
+          // count puis chaque flux (0x0A) l'un après l'autre — repartir de
+          // [] à chaque fois ferait clignoter la liste (0 → 1 → 2 → ... item
+          // à chaque poll). Tant que le nombre de flux n'a pas changé, les
+          // lignes existantes restent montées (même clé), juste mises à jour
+          // en place par les 0x0A qui suivent — pas de flicker visible.
+          const n = body[0];
+          return { ...prev, fluxes: prev.fluxes.slice(0, n) };
+        }
 
         case 0x0A: { // flux data
           let ptr = 0;
@@ -2247,6 +2620,44 @@ function App() {
           const fluxes = [...prev.fluxes];
           fluxes[idx] = { in: ins, out: outs, active, transform: { type, transpose, intervals, root_key, progression_id, bars_per_chord } };
           return { ...prev, fluxes };
+        }
+
+        case 0x13: { // générateur count — tronque à la nouvelle longueur, sans tout effacer (même raison que 0x0B ci-dessus)
+          const n = body[0];
+          return { ...prev, generators: prev.generators.slice(0, n) };
+        }
+
+        case 0x12: { // générateur data
+          let ptr = 0;
+          const idx             = body[ptr++];
+          const type             = body[ptr++];
+          const active           = body[ptr++] !== 0;
+          const waveform         = body[ptr++];
+          const sync_mode        = body[ptr++];
+          const rateLo = body[ptr++], rateHi = body[ptr++];
+          const rate_x10hz       = rateLo | (rateHi << 7);   // 14 bits (2 octets 7-bit, comme le BPM)
+          const division_idx     = body[ptr++];
+          const depth             = body[ptr++];
+          const center            = body[ptr++];
+          const cc_number         = body[ptr++];
+          const note              = body[ptr++];
+          const euclid_steps      = body[ptr++];
+          const euclid_pulses     = body[ptr++];
+          const euclid_rotation   = body[ptr++];
+          const gate_percent      = body[ptr++];
+          const n_out             = body[ptr++];
+          // chan_mask : 3 octets 7-bit → bits 0-6 | bits 7-13 | bits 14-15
+          const outs = [];
+          for (let i = 0; i < n_out; i++) {
+            const port = body[ptr++];
+            const lo   = body[ptr++];
+            const mid  = body[ptr++];
+            const top  = body[ptr++];
+            outs.push({ port, chan_mask: lo | (mid << 7) | (top << 14) });
+          }
+          const generators = [...(prev.generators || [])];
+          generators[idx] = { type, active, waveform, sync_mode, rate_x10hz, division_idx, depth, center, cc_number, note, euclid_steps, euclid_pulses, euclid_rotation, gate_percent, out: outs };
+          return { ...prev, generators };
         }
 
         case 0x0C: // sync master
@@ -2370,6 +2781,10 @@ function App() {
     for (let i = dev.fluxes.length - 1; i >= 0; i--) {
       send([MANUFACTURER_ID, 0x0B, i]);
     }
+    // Supprimer tous les générateurs existants (même logique que apply_factory() côté firmware, logic.h)
+    for (let i = dev.generators.length - 1; i >= 0; i--) {
+      send([MANUFACTURER_ID, 0x13, i]);
+    }
     // Appliquer la basic_matrix via 0x09
     for (let inIdx = 0; inIdx < 5; inIdx++) {
       for (let outIdx = 0; outIdx < 9; outIdx++) {
@@ -2377,7 +2792,7 @@ function App() {
         send([MANUFACTURER_ID, 0x09, inIdx, outIdx, val]);
       }
     }
-    setDev(prev => ({ ...prev, basicMatrix: [...tpl.matrix], fluxes: [] }));
+    setDev(prev => ({ ...prev, basicMatrix: [...tpl.matrix], fluxes: [], generators: [] }));
     setDirty(true);
     setPresetModal(null);
     showToast(`Template "${tpl.name}" appliqué`);
@@ -2432,36 +2847,11 @@ function App() {
     setDirty(true);
   }
 
-  // ── Appui maintenu sur +/- BPM : un pas immédiat, puis répétition continue ──
-  const bpmHoldRef = useRef({ timeout: null, interval: null });
-  const BPM_HOLD_DELAY_MS   = 350;  // délai avant le début de la répétition
-  const BPM_HOLD_REPEAT_MS  = 90;   // cadence de répétition
-
-  function startBpmHold(delta) {
-    nudgeInternalBpm(delta);
-    stopBpmHold();
-    bpmHoldRef.current.timeout = setTimeout(() => {
-      bpmHoldRef.current.interval = setInterval(() => nudgeInternalBpm(delta), BPM_HOLD_REPEAT_MS);
-    }, BPM_HOLD_DELAY_MS);
-  }
-
-  function stopBpmHold() {
-    clearTimeout(bpmHoldRef.current.timeout);
-    clearInterval(bpmHoldRef.current.interval);
-    bpmHoldRef.current.timeout  = null;
-    bpmHoldRef.current.interval = null;
-  }
-
-  // Coupe la répétition si le bouton quitte la fenêtre encore enfoncé (drag hors bouton, etc.)
-  useEffect(() => {
-    window.addEventListener('mouseup', stopBpmHold);
-    window.addEventListener('touchend', stopBpmHold);
-    return () => {
-      window.removeEventListener('mouseup', stopBpmHold);
-      window.removeEventListener('touchend', stopBpmHold);
-      stopBpmHold();
-    };
-  }, []);
+  // ── Appui maintenu sur +/- BPM : hook partagé avec tous les autres steppers
+  // de l'appli (transpose, harmonize, générateurs...) — voir useHoldRepeat().
+  const bpmHold = useHoldRepeat();
+  function startBpmHold(delta) { bpmHold.start(() => nudgeInternalBpm(delta)); }
+  const stopBpmHold = bpmHold.stop;
 
   // ACTION : 0=Play/Pause 1=Stop 2=Record 3=Fast Forward 4=Rewind (cf. PCEditor.h case 0x11)
   function sendTransportAction(action) {
@@ -2510,6 +2900,32 @@ function App() {
     });
     setDirty(true);
     showToast(`Flux F${idx + 1} supprimé`, 'info');
+  }
+
+  function handleGeneratorSave(gen) {
+    const idx = editingGenIdx !== null ? editingGenIdx : dev.generators.length;
+    const ng  = { ...gen, out: [...gen.out] };
+    setDev(prev => {
+      const generators = [...prev.generators];
+      generators[idx]  = ng;
+      return { ...prev, generators };
+    });
+    outputRef.current && outputRef.current.send(encodeGeneratorMsg(idx, ng));
+    setDirty(true);
+    setShowGenEditor(false);
+    setEditingGenIdx(null);
+    showToast(`Générateur L${idx + 1} sauvegardé`);
+  }
+
+  function deleteGenerator(idx) {
+    if (!confirm(`Supprimer le générateur L${idx + 1} ?`)) return;
+    send([MANUFACTURER_ID, 0x13, idx]);
+    setDev(prev => {
+      const generators = prev.generators.filter((_, i) => i !== idx);
+      return { ...prev, generators };
+    });
+    setDirty(true);
+    showToast(`Générateur L${idx + 1} supprimé`, 'info');
   }
 
   function setHostMode(mode) {
@@ -2595,6 +3011,7 @@ function App() {
             { id: 'sync',   icon: '⟳', label: 'SYNC'        },
             { id: 'matrix', icon: '⊞', label: 'MATRICE'      },
             { id: 'flux',   icon: '⇄', label: 'FLUX'         },
+            { id: 'generateurs', icon: '∿', label: 'GENERATEURS' },
             { id: 'host',     icon: '⚙', label: 'HOST CONFIG'  },
             { id: 'firmware', icon: '⬆', label: 'FIRMWARE'     },
             { id: 'dat2midi', icon: '♪', label: 'DAT → MIDI'   },
@@ -2848,6 +3265,73 @@ function App() {
                       editingIdx={editingIdx}
                       onSave={handleFluxSave}
                       onCancel={() => { setShowEditor(false); setEditingIdx(null); }}
+                    />
+                  )}
+                </>
+              )}
+
+              {/* ═══ GENERATEURS ═══ */}
+              {section === 'generateurs' && (
+                <>
+                  <div className="section-title">
+                    Générateurs (LFO / Euclidien)
+                    <span className="badge">GENERATEURS</span>
+                  </div>
+                  <div className="panel">
+                    <p className="panel-hint">
+                      Un générateur émet un flux MIDI en continu (CC pour un LFO, Note ON/OFF pour un
+                      séquenceur euclidien), indépendamment de toute entrée — vers une ou plusieurs sorties/canaux.
+                      Maximum {GEN_MAX} générateurs.
+                    </p>
+
+                    <div className="flux-list">
+                      {dev.generators.length === 0 && !showGenEditor && (
+                        <div style={{ color: '#6b7280', fontSize: 13, padding: '8px 0' }}>
+                          Aucun générateur configuré.
+                        </div>
+                      )}
+                      {dev.generators.map((g, idx) => g && (
+                        <div key={idx} className="flux-row">
+                          <div className="flux-index">L{idx + 1}</div>
+                          <div className="flux-summary">{generatorSummary(g)}</div>
+                          <div className="flux-actions">
+                            <button
+                              className="btn-sm"
+                              onClick={() => {
+                                setEditingGenIdx(idx);
+                                setShowGenEditor(true);
+                              }}
+                            >
+                              Éditer
+                            </button>
+                            <button
+                              className="btn-sm danger"
+                              onClick={() => deleteGenerator(idx)}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {!showGenEditor && dev.generators.length < GEN_MAX && (
+                      <button
+                        className="btn primary"
+                        style={{ marginTop: 14 }}
+                        onClick={() => { setEditingGenIdx(null); setShowGenEditor(true); }}
+                      >
+                        + Nouveau générateur
+                      </button>
+                    )}
+                  </div>
+
+                  {showGenEditor && (
+                    <GeneratorEditor
+                      editingGenerator={editingGenIdx !== null ? dev.generators[editingGenIdx] : null}
+                      editingIdx={editingGenIdx}
+                      onSave={handleGeneratorSave}
+                      onCancel={() => { setShowGenEditor(false); setEditingGenIdx(null); }}
                     />
                   )}
                 </>

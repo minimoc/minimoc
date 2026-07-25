@@ -172,9 +172,14 @@ inline void bpm_push_clock() {
         bpm_led_on_ms = now_ms;
         harmony_on_beat();   // avancement de la progression d'accords (harmony.h)
     }
+    generators_on_clock_tick();   // avance les LFO synchronisés (logic.h)
 }
 
 // Réaligne le flash sur le prochain temps fort (appelé sur Start/Continue).
+// NB : ne touche PAS à la position des générateurs synchronisés (clock_ticks/
+// euclid_step) — Continue doit reprendre pile où c'était, pas redémarrer le
+// motif. C'est _sync_forward() (_midi.h) qui appelle generators_on_transport_
+// reset() séparément, uniquement sur un vrai Start.
 inline void bpm_reset_beat() {
     bpm_beat_tick_ctr = 0;
     harmony_on_transport_reset();   // remet la progression d'accords au 1er accord (harmony.h)

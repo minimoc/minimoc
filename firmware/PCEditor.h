@@ -132,6 +132,45 @@ void sendFullDumpToPC() {
     usbMIDI.sendSysEx(pos, buf); delay(3);
   }
 
+  // 6b. Générateurs : count (0x13) puis dump de chaque générateur (0x12)
+  // F0 7D 12 idx type active waveform sync_mode rate_m0 rate_m1 division_idx
+  //    depth center cc_number note euclid_steps euclid_pulses euclid_rotation
+  //    gate_percent n_out [port m0 m1 m2]×n_out F7
+  // rate_x10hz (0-500) encodé sur 2 octets 7-bit (comme le BPM, cf. 7b plus bas) ;
+  // chan_mask de chaque sortie sur 3 octets 7-bit, comme pour Flux ci-dessus.
+  { uint8_t d[] = {0x7D, 0x13, gen_count};
+    usbMIDI.sendSysEx(3, d); delay(2); }
+  for (uint8_t g = 0; g < gen_count; g++) {
+    uint8_t buf[3 + 16 + FLUX_MAX_OUT*4];
+    uint8_t pos = 0;
+    buf[pos++] = 0x7D;
+    buf[pos++] = 0x12;
+    buf[pos++] = g;
+    buf[pos++] = gen_list[g].type;
+    buf[pos++] = gen_list[g].active ? 1 : 0;
+    buf[pos++] = gen_list[g].waveform;
+    buf[pos++] = gen_list[g].sync_mode;
+    buf[pos++] = gen_list[g].rate_x10hz & 0x7F;
+    buf[pos++] = (gen_list[g].rate_x10hz >> 7) & 0x7F;
+    buf[pos++] = gen_list[g].division_idx;
+    buf[pos++] = gen_list[g].depth;
+    buf[pos++] = gen_list[g].center;
+    buf[pos++] = gen_list[g].cc_number;
+    buf[pos++] = gen_list[g].note;
+    buf[pos++] = gen_list[g].euclid_steps;
+    buf[pos++] = gen_list[g].euclid_pulses;
+    buf[pos++] = gen_list[g].euclid_rotation;
+    buf[pos++] = gen_list[g].gate_percent;
+    buf[pos++] = gen_list[g].n_out;
+    for (uint8_t oi = 0; oi < gen_list[g].n_out; oi++) {
+      buf[pos++] = gen_list[g].out[oi].port;
+      buf[pos++] = gen_list[g].out[oi].chan_mask & 0x7F;
+      buf[pos++] = (gen_list[g].out[oi].chan_mask >> 7)  & 0x7F;
+      buf[pos++] = (gen_list[g].out[oi].chan_mask >> 14) & 0x03;
+    }
+    usbMIDI.sendSysEx(pos, buf); delay(2);
+  }
+
   // 7. SYNC master (0x0C) — F0 7D 0C VALUE F7 (VALUE: 0-10 cf. SYNC_LABELS dans logic.h, 0x7F=OFF)
   // 0xFF est illégal en SysEx (>7 bits) → mapper 0xFF→0x7F sur le fil
   { uint8_t v = (sync_master == 0xFF) ? 0x7F : sync_master;
@@ -270,6 +309,56 @@ void handleEditorSysex(byte* data, unsigned size) {
       }
       break;
 
+    case 0x12:   // ADD/UPDATE GENERATOR — F0 7D 12 idx type active waveform sync_mode rate_m0 rate_m1 division_idx depth center cc_number note euclid_steps euclid_pulses euclid_rotation gate_percent n_out [port m0 m1 m2]×n_out F7
+      if (size >= 20) {
+        uint8_t g = data[3];
+        if (g <= gen_count && g < GEN_MAX) {
+          if (g == gen_count) gen_count++;
+          memset(&gen_list[g], 0, sizeof(Generator));   // zeroise avant écriture — évite valeurs résiduelles
+          gen_list[g].type         = (data[4] <= GEN_EUCLID) ? data[4] : GEN_LFO;
+          gen_list[g].active       = (data[5] != 0);
+          gen_list[g].waveform     = min(data[6], (uint8_t)(LFO_WAVEFORM_COUNT - 1));
+          gen_list[g].sync_mode    = (data[7] <= LFO_SYNC_CLOCK) ? data[7] : LFO_SYNC_FREE;
+          uint16_t rate = (uint16_t)data[8] | ((uint16_t)data[9] << 7);
+          gen_list[g].rate_x10hz   = (rate >= LFO_RATE_X10HZ_MIN && rate <= LFO_RATE_X10HZ_MAX) ? rate : LFO_RATE_X10HZ_DEFAULT;
+          gen_list[g].division_idx = min(data[10], (uint8_t)(LFO_DIVISION_COUNT - 1));
+          gen_list[g].depth        = min(data[11], (uint8_t)63);
+          gen_list[g].center       = min(data[12], (uint8_t)127);
+          gen_list[g].cc_number    = min(data[13], (uint8_t)127);
+          gen_list[g].note         = min(data[14], (uint8_t)127);
+          gen_list[g].euclid_steps = (data[15] >= 1 && data[15] <= EUCLID_STEPS_MAX) ? data[15] : 8;
+          gen_list[g].euclid_pulses   = min(data[16], gen_list[g].euclid_steps);
+          gen_list[g].euclid_rotation = min(data[17], (uint8_t)(gen_list[g].euclid_steps - 1));
+          gen_list[g].gate_percent    = (data[18] >= 1 && data[18] <= 100) ? data[18] : 50;
+          gen_list[g].n_out = min(data[19], (uint8_t)FLUX_MAX_OUT);
+          // chan_mask encodé sur 3 octets 7-bit : bits 0-6 | bits 7-13 | bits 14-15
+          uint8_t pos = 20;
+          for (uint8_t oi = 0; oi < gen_list[g].n_out && pos+3 < size; oi++, pos += 4) {
+            gen_list[g].out[oi].port      = data[pos];
+            gen_list[g].out[oi].chan_mask = (uint16_t)data[pos+1]
+                                          | ((uint16_t)data[pos+2] << 7)
+                                          | ((uint16_t)data[pos+3] << 14);
+          }
+          // Repart propre — même geste que _gen_save_and_return() (generators_submenu.h)
+          memset(&gen_rt[g], 0, sizeof(GeneratorRuntime));
+        }
+      }
+      break;
+
+    case 0x13:   // DELETE GENERATOR — F0 7D 13 idx F7
+      if (size >= 4) {
+        uint8_t g = data[3];
+        if (g < gen_count) {
+          for (uint8_t i = g; i < gen_count - 1; i++) {
+            gen_list[i] = gen_list[i + 1];
+            gen_rt[i]   = gen_rt[i + 1];
+          }
+          gen_count--;
+          memset(&gen_rt[gen_count], 0, sizeof(GeneratorRuntime));
+        }
+      }
+      break;
+
     case 0x0E: {  // QUICK POLL — preset + sync + basic_matrix + flux
       { uint8_t buf[16]; uint8_t pos = 0;
         buf[pos++] = 0x7D; buf[pos++] = 0x03;
@@ -323,6 +412,39 @@ void handleEditorSysex(byte* data, unsigned size) {
           buf[pos++] = flux_list[f].out[oi].chan_mask & 0x7F;
           buf[pos++] = (flux_list[f].out[oi].chan_mask >> 7)  & 0x7F;
           buf[pos++] = (flux_list[f].out[oi].chan_mask >> 14) & 0x03;
+        }
+        usbMIDI.sendSysEx(pos, buf);
+        usbMIDI.send_now();
+      }
+      // générateurs : count puis données de chaque générateur (mêmes champs que sendFullDumpToPC)
+      { uint8_t d[] = {0x7D, 0x13, gen_count};
+        usbMIDI.sendSysEx(3, d);
+        usbMIDI.send_now(); }
+      for (uint8_t g = 0; g < gen_count; g++) {
+        uint8_t buf[3 + 16 + FLUX_MAX_OUT*4];
+        uint8_t pos = 0;
+        buf[pos++] = 0x7D; buf[pos++] = 0x12; buf[pos++] = g;
+        buf[pos++] = gen_list[g].type;
+        buf[pos++] = gen_list[g].active ? 1 : 0;
+        buf[pos++] = gen_list[g].waveform;
+        buf[pos++] = gen_list[g].sync_mode;
+        buf[pos++] = gen_list[g].rate_x10hz & 0x7F;
+        buf[pos++] = (gen_list[g].rate_x10hz >> 7) & 0x7F;
+        buf[pos++] = gen_list[g].division_idx;
+        buf[pos++] = gen_list[g].depth;
+        buf[pos++] = gen_list[g].center;
+        buf[pos++] = gen_list[g].cc_number;
+        buf[pos++] = gen_list[g].note;
+        buf[pos++] = gen_list[g].euclid_steps;
+        buf[pos++] = gen_list[g].euclid_pulses;
+        buf[pos++] = gen_list[g].euclid_rotation;
+        buf[pos++] = gen_list[g].gate_percent;
+        buf[pos++] = gen_list[g].n_out;
+        for (uint8_t oi = 0; oi < gen_list[g].n_out; oi++) {
+          buf[pos++] = gen_list[g].out[oi].port;
+          buf[pos++] = gen_list[g].out[oi].chan_mask & 0x7F;
+          buf[pos++] = (gen_list[g].out[oi].chan_mask >> 7)  & 0x7F;
+          buf[pos++] = (gen_list[g].out[oi].chan_mask >> 14) & 0x03;
         }
         usbMIDI.sendSysEx(pos, buf);
         usbMIDI.send_now();

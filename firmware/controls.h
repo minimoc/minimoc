@@ -37,7 +37,7 @@ enum UIScreen {
   UI_CAROUSEL,     // main carousel selector
   UI_PRESETS,      // preset sub-menu
   UI_SYNC,         // sync sub-menu
-  UI_ROUTING,      // routing sub-menu
+  UI_ROUTING,      // routing sub-menu (inclut GENERATEURS — voir routing_submenu.h/RS_GENERATORS)
   UI_MONITOR,      // moniteur VU-mètre temps réel
   UI_SYSTEM,       // system sub-menu (INFO + HOST CONFIG)
   UI_TRANSPORT,    // tempo de l'horloge interne MiniMoc (source MINIMOC du menu SYNC)

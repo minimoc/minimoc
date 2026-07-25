@@ -98,8 +98,8 @@ bool ps_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
     if (enc_up   && ps_fac_cursor > 0)               ps_fac_cursor--;
     if (enc_down && ps_fac_cursor < FACTORY_COUNT-1)  ps_fac_cursor++;
     if (btn_valid) {
-      apply_factory(ps_fac_cursor);
-      harmony_reset_held_notes();   // évite que d'anciens slots restent occupés après reset (harmony.h)
+      apply_factory(ps_fac_cursor);   // efface aussi gen_count/gen_list + reset runtime (logic.h)
+      harmony_reset_held_notes();     // évite que d'anciens slots restent occupés après reset (harmony.h)
       ps_confirm_msg = FACTORY_PRESETS[ps_fac_cursor].name;
       ps_state = PS_CONFIRM; ps_confirm_at = millis();
     }
@@ -126,6 +126,7 @@ bool ps_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
       else {
         ps_confirm_msg = silent_load_preset() ? "Charge OK!" : "Erreur SD!";
         harmony_reset_held_notes();   // évite que d'anciens slots restent occupés après chargement (harmony.h)
+        generators_reset_runtime();   // redémarre les LFO en phase, sur les réglages rechargés (logic.h)
       }
       ps_state = PS_CONFIRM; ps_confirm_at = millis();
     } else if (ps_cursor == 3) {

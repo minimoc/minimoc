@@ -93,7 +93,21 @@ static inline MIDIDevice_BigBuffer* _usb_out_dev(uint8_t out_port_idx) {
 // ----------------------------------------------------------------
 static inline void _sync_forward(byte msgType) {
     if (msgType == (byte)midi::Clock) bpm_push_clock();
-    if (msgType == (byte)midi::Start || msgType == (byte)midi::Continue) bpm_reset_beat();
+    if (msgType == (byte)midi::Start || msgType == (byte)midi::Continue) {
+        bpm_reset_beat();
+        // Réaligne la position des générateurs synchro UNIQUEMENT sur un vrai
+        // Start — sur Continue (reprise après PAUSE), ils doivent reprendre
+        // pile où ils en étaient, pas redémarrer le motif depuis le début.
+        // Rien à faire côté phase pour reprendre : generators_on_clock_tick()
+        // (logic.h) ignore déjà les pulses tant que transport_running est
+        // faux, donc clock_ticks/euclid_step sont restés gelés tels quels.
+        if (msgType == (byte)midi::Start) generators_on_transport_reset();
+        transport_running = true;   // relance les générateurs gelés (logic.h)
+    }
+    if (msgType == (byte)midi::Stop) {
+        transport_running = false;   // gèle les générateurs (logic.h)
+        generators_on_transport_stop();
+    }
     midi::MidiType t = (midi::MidiType)msgType;
     MIDI1.sendRealTime(t); MIDI2.sendRealTime(t);
     MIDI3.sendRealTime(t); MIDI4.sendRealTime(t);
@@ -329,22 +343,30 @@ void handleNoteOffB(byte ch, byte note, byte vel) { mon_push(SRC_B,0,vel); handl
 // ----------------------------------------------------------------
 // ControlChange
 // ----------------------------------------------------------------
+// Envoi brut d'un CC vers un port de sortie 0-8, sans lookup de route_matrix.
+// Factorisé depuis handleControlChange() pour être réutilisable par les
+// générateurs (cf. generators_send_cc() ci-dessous) qui n'ont pas d'entrée
+// à router — juste une liste de sorties à servir directement.
+static inline void _send_cc_raw(uint8_t out, byte dc, byte number, byte value) {
+    switch(out) {
+        case 0: MIDI1.sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_1); break;
+        case 1: MIDI2.sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_2); break;
+        case 2: MIDI3.sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_3); break;
+        case 3: MIDI4.sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_4); break;
+        case 4: MIDI5.sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_5); break;
+        case 5: MIDI6.sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_6); break;
+        case 6: { MIDIDevice_BigBuffer* _ud=_usb_out_dev(0); if(_ud&&(bool)*_ud) _ud->sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_7); break; }
+        case 7: { MIDIDevice_BigBuffer* _ud=_usb_out_dev(1); if(_ud&&(bool)*_ud) _ud->sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_8); break; }
+        case 8: { MIDIDevice_BigBuffer* _ud=_usb_out_dev(2); if(_ud&&(bool)*_ud) _ud->sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_9); break; }
+    }
+}
+
 void handleControlChange(byte midiIn, byte channel, byte number, byte value, byte source) {
     for (int out = 0; out < NUM_OUTPUTS; out++) {
         uint16_t mask = route_matrix[midiIn-1][channel-1][out];
         for (uint16_t m = mask; m; m &= m-1) {
             byte dc = __builtin_ctz(m) + 1;
-            switch(out) {
-                case 0: MIDI1.sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_1); break;
-                case 1: MIDI2.sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_2); break;
-                case 2: MIDI3.sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_3); break;
-                case 3: MIDI4.sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_4); break;
-                case 4: MIDI5.sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_5); break;
-                case 5: MIDI6.sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_6); break;
-                case 6: { MIDIDevice_BigBuffer* _ud=_usb_out_dev(0); if(_ud&&(bool)*_ud) _ud->sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_7); break; }
-                case 7: { MIDIDevice_BigBuffer* _ud=_usb_out_dev(1); if(_ud&&(bool)*_ud) _ud->sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_8); break; }
-                case 8: { MIDIDevice_BigBuffer* _ud=_usb_out_dev(2); if(_ud&&(bool)*_ud) _ud->sendControlChange(number,value,dc); usbMIDI.sendControlChange(number,value,dc,USB_OUT_9); break; }
-            }
+            _send_cc_raw(out, dc, number, value);
             rec_push(source, out+1, 0xB0, dc, number, value);
         }
     }
@@ -352,6 +374,48 @@ void handleControlChange(byte midiIn, byte channel, byte number, byte value, byt
 
 void handleControlChangeA(byte ch, byte num, byte val) { mon_push(SRC_A,0,val); handleControlChange(1,ch,num,val,SRC_A); }
 void handleControlChangeB(byte ch, byte num, byte val) { mon_push(SRC_B,0,val); handleControlChange(2,ch,num,val,SRC_B); }
+
+// ----------------------------------------------------------------
+// Générateurs — envoi du CC courant d'un LFO vers toutes ses sorties.
+// gen_list/gen_rt : cf. logic.h. Appelée depuis generators_tick() (generators.h).
+// ----------------------------------------------------------------
+void generators_send_cc(uint8_t gen_idx, uint8_t value) {
+    Generator &g = gen_list[gen_idx];
+    for (uint8_t oi = 0; oi < g.n_out; oi++) {
+        uint16_t mask = g.out[oi].chan_mask;
+        for (uint16_t m = mask; m; m &= m-1) {
+            uint8_t dc = __builtin_ctz(m) + 1;
+            _send_cc_raw(g.out[oi].port, dc, g.cc_number, value);
+            rec_push(SRC_PC, g.out[oi].port+1, 0xB0, dc, g.cc_number, value);
+        }
+    }
+}
+
+// Générateurs de type GEN_EUCLID — Note ON/OFF vers toutes les sorties,
+// même schéma que generators_send_cc() ci-dessus (réutilise SEND_NOTE_ON/
+// SEND_NOTE_OFF, déjà utilisées par handleNoteOn/handleNoteOff).
+void generators_send_note_on(uint8_t gen_idx, uint8_t note) {
+    Generator &g = gen_list[gen_idx];
+    for (uint8_t oi = 0; oi < g.n_out; oi++) {
+        uint16_t mask = g.out[oi].chan_mask;
+        for (uint16_t m = mask; m; m &= m-1) {
+            uint8_t dc = __builtin_ctz(m) + 1;
+            SEND_NOTE_ON(g.out[oi].port, note, EUCLID_VELOCITY, dc, SRC_PC);
+            rec_push(SRC_PC, g.out[oi].port+1, 0x90, dc, note, EUCLID_VELOCITY);
+        }
+    }
+}
+void generators_send_note_off(uint8_t gen_idx, uint8_t note) {
+    Generator &g = gen_list[gen_idx];
+    for (uint8_t oi = 0; oi < g.n_out; oi++) {
+        uint16_t mask = g.out[oi].chan_mask;
+        for (uint16_t m = mask; m; m &= m-1) {
+            uint8_t dc = __builtin_ctz(m) + 1;
+            SEND_NOTE_OFF(g.out[oi].port, note, 0, dc, SRC_PC);
+            rec_push(SRC_PC, g.out[oi].port+1, 0x80, dc, note, 0);
+        }
+    }
+}
 
 // ----------------------------------------------------------------
 // ProgramChange

@@ -1,4 +1,4 @@
-#define FIRMWARE_VERSION "v0.4.1"
+#define FIRMWARE_VERSION "v0.4.2"
 
 // Décommenter pour activer l'enregistrement MIDI en tâche de fond sur carte SD.
 // Désactivé : sd_tick() et MTP ne tournent pas → latence réduite, sync plus stable.
@@ -40,11 +40,13 @@ SdFsAdapter sd_mtp_fs;
 
 #include "preset.h"        // silent_save/load_preset — après sd_presets
 #include "_midi.h"
+#include "generators.h"    // generators_tick() — après _midi.h (utilise generators_send_cc)
 #include "PCEditor.h"
 #include "ota.h"
 
 // --- New carousel UI (replaces menu.h) ---
 #include "carousel_ui.h"
+#include "generators_submenu.h"   // avant routing_submenu.h (RS_GENERATORS y délègue via gs_*)
 #include "routing_submenu.h"
 #include "preset_submenu.h"
 #include "info_submenu.h"
@@ -233,6 +235,7 @@ void loop() {
   bpm_tick();            // recalcule bpm_value à période fixe, indépendamment de l'affichage
   bpm_led_tick();        // éteint la LED de temps après BPM_LED_BLINK_MS (à chaque loop pour une durée précise)
   internal_clock_flush_usb(); // relaie vers les sorties USB Host le Clock généré par l'ISR du timer
+  generators_tick(millis());  // sert les LFO (mode libre + envoi CC) — actif même écran éteint
 
 int buttonState = digitalRead(PIN_BACK);
 
