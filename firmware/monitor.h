@@ -170,11 +170,15 @@ inline void bpm_push_clock() {
         digitalWrite(LED_BUILTIN, HIGH);
         bpm_led_on    = true;
         bpm_led_on_ms = now_ms;
+        harmony_on_beat();   // avancement de la progression d'accords (harmony.h)
     }
 }
 
 // Réaligne le flash sur le prochain temps fort (appelé sur Start/Continue).
-inline void bpm_reset_beat() { bpm_beat_tick_ctr = 0; }
+inline void bpm_reset_beat() {
+    bpm_beat_tick_ctr = 0;
+    harmony_on_transport_reset();   // remet la progression d'accords au 1er accord (harmony.h)
+}
 
 // Éteint la LED après BPM_LED_BLINK_MS — à appeler à chaque loop() (non bloquant),
 // séparément de bpm_tick() pour garder une durée de flash précise.

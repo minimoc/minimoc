@@ -140,12 +140,15 @@ struct FluxOutSlot { uint8_t port; uint16_t chan_mask; };
 // TRANSFORM — traitement optionnel attaché à un Flux
 // -----------------------------------------------------------------
 // Un Flux porte AU PLUS un type de transform (pas de cumul) : TRANS_NONE,
-// TRANS_NOTE_TRANSPOSE (décalage de note) ou TRANS_HARMONIZE (empile jusqu'à
-// 4 notes supplémentaires par rapport à la note reçue).
+// TRANS_NOTE_TRANSPOSE (décalage de note), TRANS_HARMONIZE (empile jusqu'à
+// 4 notes supplémentaires par rapport à la note reçue) ou TRANS_CHORD_HARMONIZE
+// (retranspose la note reçue pour coller à l'accord courant d'une progression
+// — cf. harmony.h pour l'algorithme).
 enum TransformType : uint8_t {
     TRANS_NONE = 0,
     TRANS_NOTE_TRANSPOSE,
     TRANS_HARMONIZE,
+    TRANS_CHORD_HARMONIZE,
 };
 
 #define FLUX_TRANSPOSE_MIN -24
@@ -157,6 +160,11 @@ struct FluxTransform {
     int8_t  transpose;                              // TRANS_NOTE_TRANSPOSE : demi-tons, -24..+24
     uint8_t n_intervals;                            // TRANS_HARMONIZE : nb d'intervalles actifs (0-4)
     int8_t  intervals[HARMONIZE_MAX_INTERVALS];     // TRANS_HARMONIZE : demi-tons relatifs à la note reçue
+    // TRANS_CHORD_HARMONIZE (champs ajoutés en fin de struct — append-only,
+    // cf. migration v5→v6 dans sd_presets.h) :
+    uint8_t root_key;         // tonalité fondamentale, 0-11 (0=Do, cf. ROOT_KEY_LABELS dans harmony.h)
+    uint8_t progression_id;   // index dans PROGRESSION_PRESETS (harmony.h), 0-3
+    uint8_t bars_per_chord;   // nb de mesures 4/4 par accord de la progression, 1-8
 };
 
 struct Flux {
@@ -232,6 +240,10 @@ inline void recompute_route_matrix() {
 }
 
 // Appliquer un preset d'usine en RAM (basic_matrix + flux effacés + recompute)
+// NB : harmony_reset_held_notes() (harmony.h) n'est PAS appelé ici — logic.h
+// est inclus avant harmony.h dans firmware.ino (harmony.h a besoin de
+// FluxTransform). Les appelants doivent appeler harmony_reset_held_notes()
+// après apply_factory() — cf. preset_submenu.h.
 inline void apply_factory(uint8_t idx) {
     if (idx >= FACTORY_COUNT) return;
     memcpy(basic_matrix, FACTORY_PRESETS[idx].matrix, sizeof(basic_matrix));

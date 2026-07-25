@@ -99,6 +99,7 @@ bool ps_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
     if (enc_down && ps_fac_cursor < FACTORY_COUNT-1)  ps_fac_cursor++;
     if (btn_valid) {
       apply_factory(ps_fac_cursor);
+      harmony_reset_held_notes();   // évite que d'anciens slots restent occupés après reset (harmony.h)
       ps_confirm_msg = FACTORY_PRESETS[ps_fac_cursor].name;
       ps_state = PS_CONFIRM; ps_confirm_at = millis();
     }
@@ -122,7 +123,10 @@ bool ps_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
     } else if (ps_cursor == 2) {
       if (!sd_ok) { ps_confirm_msg = "Pas de SD!"; }
       else if (!sd_preset_exists(current_preset)) { ps_confirm_msg = "Preset vide"; }
-      else { ps_confirm_msg = silent_load_preset() ? "Charge OK!" : "Erreur SD!"; }
+      else {
+        ps_confirm_msg = silent_load_preset() ? "Charge OK!" : "Erreur SD!";
+        harmony_reset_held_notes();   // évite que d'anciens slots restent occupés après chargement (harmony.h)
+      }
       ps_state = PS_CONFIRM; ps_confirm_at = millis();
     } else if (ps_cursor == 3) {
       ps_state = PS_FACTORY; ps_fac_cursor = 0;

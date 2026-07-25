@@ -9,10 +9,13 @@
 //   RS_FLUX_STEP1_CH : picker canaux entrée (overlay)
 //   RS_FLUX_STEP2    : sélection ports de sortie + canaux
 //   RS_FLUX_STEP2_CH : picker canaux sortie (overlay)
-//   RS_FLUX_TRANSFORM_TYPE : choix Aucun / Transpose / Harmonize
+//   RS_FLUX_TRANSFORM_TYPE : choix Aucun / Transpose / Harmonize / Accords
 //   RS_FLUX_STEP3    : réglage transpose (demi-tons)
 //   RS_FLUX_STEP4    : réglage harmonize (jusqu'à 4 intervalles)
 //   RS_FLUX_STEP4_VAL: picker valeur d'un intervalle harmonize (overlay)
+//   RS_FLUX_STEP5    : accords — choix de la tonique (12 valeurs)
+//   RS_FLUX_STEP6    : accords — choix de la progression (4 valeurs)
+//   RS_FLUX_STEP7    : accords — mesures par accord (1-8)
 
 enum RoutingSubState {
   RS_MAIN,
@@ -23,10 +26,13 @@ enum RoutingSubState {
   RS_FLUX_STEP1_CH,
   RS_FLUX_STEP2,
   RS_FLUX_STEP2_CH,
-  RS_FLUX_TRANSFORM_TYPE,   // choix du type de transform (Aucun/Transpose/Harmonize)
+  RS_FLUX_TRANSFORM_TYPE,   // choix du type de transform (Aucun/Transpose/Harmonize/Accords)
   RS_FLUX_STEP3,     // transpose
   RS_FLUX_STEP4,     // harmonize : jusqu'à 4 intervalles
   RS_FLUX_STEP4_VAL, // harmonize : édition fine d'un intervalle (overlay)
+  RS_FLUX_STEP5,     // accords : tonique
+  RS_FLUX_STEP6,     // accords : progression
+  RS_FLUX_STEP7,     // accords : mesures par accord
 };
 
 static RoutingSubState rs_state = RS_MAIN;
@@ -42,6 +48,8 @@ static bool    rs_ch_is_out  = false; // picker input(false) ou output(true)
 static uint8_t  rs_ch_cursor  = 0;   // curseur dans le picker 0-16 (16=TOUT)
 static uint8_t  rs_action_cur = 0;   // RS_FLUX_ACTION : 0=Modifier 1=Supprimer
 static uint8_t  rs_h_slot     = 0;   // RS_FLUX_STEP4_VAL : slot d'intervalle harmonize en cours d'édition (0-3)
+static uint8_t  rs_root_scroll = 0;  // RS_FLUX_STEP5 : défilement liste des 12 toniques
+static uint8_t  rs_prog_scroll = 0;  // RS_FLUX_STEP6 : défilement liste des progressions
 
 
 // Étiquettes
@@ -128,7 +136,7 @@ static uint8_t rs_flux_scroll = 0;  // premier flux visible
 //   sortie:n      = canal n fixe  (ex: "4:5")
 //   sortie:nc     = n canaux      (ex: "4:2c")
 static void _flux_summary(uint8_t f, char* buf, uint8_t maxlen) {
-  char tmp[8]; uint8_t pos = 0;
+  char tmp[10]; uint8_t pos = 0;   // 10 : couvre le pire cas " A4:Sol#" (8 car. + NUL)
   auto _app = [&](const char* s) {
     for (const char* c = s; *c && pos < maxlen-1; c++) buf[pos++] = *c;
   };
@@ -165,6 +173,11 @@ static void _flux_summary(uint8_t f, char* buf, uint8_t maxlen) {
     _app(tmp);
   } else if (flux_list[f].transform.type == TRANS_HARMONIZE && flux_list[f].transform.n_intervals > 0) {
     snprintf(tmp, sizeof(tmp), " H%u", flux_list[f].transform.n_intervals);
+    _app(tmp);
+  } else if (flux_list[f].transform.type == TRANS_CHORD_HARMONIZE) {
+    snprintf(tmp, sizeof(tmp), " A%u:%s",
+             flux_list[f].transform.progression_id + 1,
+             ROOT_KEY_LABELS[flux_list[f].transform.root_key]);
     _app(tmp);
   }
   buf[pos] = '\0';
@@ -315,9 +328,9 @@ void rs_draw_step2() {
   u8g2.sendBuffer();
 }
 
-// ── RS_FLUX_TRANSFORM_TYPE — choix Aucun / Transpose / Harmonize ──
-static const char* RS_TRANSFORM_ITEMS[] = { "Aucun", "Transpose", "Harmonize" };
-#define RS_TRANSFORM_COUNT 3
+// ── RS_FLUX_TRANSFORM_TYPE — choix Aucun / Transpose / Harmonize / Accords ──
+static const char* RS_TRANSFORM_ITEMS[] = { "Aucun", "Transpose", "Harmonize", "Accords" };
+#define RS_TRANSFORM_COUNT 4
 
 void rs_draw_transform_type() {
   u8g2.clearBuffer();
@@ -326,8 +339,8 @@ void rs_draw_transform_type() {
   u8g2.drawHLine(0, 12, SCREEN_W);
   u8g2.setFont(UI_FONT_BODY);
   for (uint8_t i = 0; i < RS_TRANSFORM_COUNT; i++) {
-    uint8_t y = 26 + i * 14;
-    if (i == rs_step_cursor) { u8g2.drawBox(0, y-10, SCREEN_W, 13); u8g2.setDrawColor(0); }
+    uint8_t y = 22 + i * 10;   // pas réduit (10px) pour que les 4 entrées tiennent sur l'écran
+    if (i == rs_step_cursor) { u8g2.drawBox(0, y-8, SCREEN_W, 10); u8g2.setDrawColor(0); }
     u8g2.drawStr(8, y, RS_TRANSFORM_ITEMS[i]);
     u8g2.setDrawColor(1);
   }
@@ -412,6 +425,92 @@ void rs_draw_step4_val() {
   const char* hint = "demi-tons (-24..+24)";
   uint8_t hw = u8g2.getStrWidth(hint);
   u8g2.drawStr((SCREEN_W - hw) / 2, 47, hint);
+
+  u8g2.sendBuffer();
+}
+
+// ── RS_FLUX_STEP5 — accords : choix de la tonique ─────────────────
+#define RS_ROOT_ITEM0_Y 21
+#define RS_ROOT_ROW_H   10
+#define RS_ROOT_VISIBLE 4
+
+void rs_draw_step5() {
+  u8g2.clearBuffer();
+  u8g2.setFont(UI_FONT_TITLE);
+  u8g2.drawStr(0, 10, "ACCORDS \x10 TONIQUE");
+  u8g2.drawHLine(0, 12, SCREEN_W);
+
+  if (rs_step_cursor < rs_root_scroll)                     rs_root_scroll = rs_step_cursor;
+  if (rs_step_cursor >= rs_root_scroll + RS_ROOT_VISIBLE)  rs_root_scroll = rs_step_cursor - RS_ROOT_VISIBLE + 1;
+
+  u8g2.setFont(UI_FONT_BODY);
+  for (uint8_t vi = 0; vi < RS_ROOT_VISIBLE; vi++) {
+    uint8_t i = rs_root_scroll + vi;
+    if (i >= 12) break;
+    int y = RS_ROOT_ITEM0_Y + vi * RS_ROOT_ROW_H;
+    if (i == rs_step_cursor) { u8g2.drawBox(0, y-8, SCREEN_W, RS_ROOT_ROW_H); u8g2.setDrawColor(0); }
+    u8g2.drawStr(4, y, ROOT_KEY_LABELS[i]);
+    u8g2.setDrawColor(1);
+  }
+
+  u8g2.setFont(UI_FONT_SMALL);
+  if (rs_root_scroll > 0)                    u8g2.drawStr(122, 18, "^");
+  if (rs_root_scroll + RS_ROOT_VISIBLE < 12) u8g2.drawStr(122, 62, "v");
+  u8g2.sendBuffer();
+}
+
+// ── RS_FLUX_STEP6 — accords : choix de la progression ─────────────
+#define RS_PROG_ITEM0_Y 21
+#define RS_PROG_ROW_H   10
+#define RS_PROG_VISIBLE 4
+
+void rs_draw_step6() {
+  u8g2.clearBuffer();
+  u8g2.setFont(UI_FONT_TITLE);
+  u8g2.drawStr(0, 10, "ACCORDS \x10 PROGRES.");
+  u8g2.drawHLine(0, 12, SCREEN_W);
+
+  if (rs_step_cursor < rs_prog_scroll)                     rs_prog_scroll = rs_step_cursor;
+  if (rs_step_cursor >= rs_prog_scroll + RS_PROG_VISIBLE)  rs_prog_scroll = rs_step_cursor - RS_PROG_VISIBLE + 1;
+
+  u8g2.setFont(UI_FONT_BODY);
+  for (uint8_t vi = 0; vi < RS_PROG_VISIBLE; vi++) {
+    uint8_t i = rs_prog_scroll + vi;
+    if (i >= PROGRESSION_COUNT) break;
+    int y = RS_PROG_ITEM0_Y + vi * RS_PROG_ROW_H;
+    if (i == rs_step_cursor) { u8g2.drawBox(0, y-8, SCREEN_W, RS_PROG_ROW_H); u8g2.setDrawColor(0); }
+    u8g2.drawStr(4, y, PROGRESSION_PRESETS[i].short_label);
+    u8g2.setDrawColor(1);
+  }
+
+  u8g2.setFont(UI_FONT_SMALL);
+  if (rs_prog_scroll > 0)                            u8g2.drawStr(122, 18, "^");
+  if (rs_prog_scroll + RS_PROG_VISIBLE < PROGRESSION_COUNT) u8g2.drawStr(122, 62, "v");
+  u8g2.sendBuffer();
+}
+
+// ── RS_FLUX_STEP7 — accords : mesures par accord ───────────────────
+void rs_draw_step7() {
+  u8g2.clearBuffer();
+  u8g2.setFont(UI_FONT_TITLE);
+  u8g2.drawStr(0, 10, "MESURES/ACCORD");
+  u8g2.drawHLine(0, 12, SCREEN_W);
+
+  char val[8];
+  snprintf(val, sizeof(val), "%u", rs_flux_tmp.transform.bars_per_chord);
+  uint8_t vw = u8g2.getStrWidth(val);
+  u8g2.drawStr((SCREEN_W - vw) / 2, 36, val);
+
+  u8g2.setFont(UI_FONT_SMALL);
+  const char* hint = "mesures 4/4 (1..8)";
+  uint8_t hw = u8g2.getStrWidth(hint);
+  u8g2.drawStr((SCREEN_W - hw) / 2, 47, hint);
+
+  u8g2.drawBox(0, 54, SCREEN_W, 10);
+  u8g2.setDrawColor(0);
+  uint8_t lw = u8g2.getStrWidth("\x08 VALIDER");
+  u8g2.drawStr((SCREEN_W - lw) / 2, 62, "\x08 VALIDER");
+  u8g2.setDrawColor(1);
 
   u8g2.sendBuffer();
 }
@@ -677,10 +776,16 @@ bool rs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
         } else if (rs_step_cursor == TRANS_NOTE_TRANSPOSE) {
           rs_flux_tmp.transform.type = TRANS_NOTE_TRANSPOSE;
           rs_state = RS_FLUX_STEP3;
-        } else {   // TRANS_HARMONIZE
+        } else if (rs_step_cursor == TRANS_HARMONIZE) {
           rs_flux_tmp.transform.type = TRANS_HARMONIZE;
           rs_step_cursor = 0;
           rs_state = RS_FLUX_STEP4;
+        } else {   // TRANS_CHORD_HARMONIZE
+          rs_flux_tmp.transform.type = TRANS_CHORD_HARMONIZE;
+          if (rs_flux_tmp.transform.bars_per_chord < CHORD_BARS_MIN)
+            rs_flux_tmp.transform.bars_per_chord = CHORD_BARS_DEFAULT;   // 1ère fois seulement
+          rs_step_cursor = rs_flux_tmp.transform.root_key;               // présélection
+          rs_state = RS_FLUX_STEP5;
         }
       }
       if (btn_back) { rs_state = RS_FLUX_STEP2; rs_step_cursor = 9; }
@@ -729,6 +834,37 @@ bool rs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
       if (btn_valid || btn_back) rs_state = RS_FLUX_STEP4;
       break;
 
+    // ── FLUX STEP 5 — accords : tonique ───────────────────────────
+    case RS_FLUX_STEP5:
+      if (enc_up   && rs_step_cursor > 0)  rs_step_cursor--;
+      if (enc_down && rs_step_cursor < 11) rs_step_cursor++;
+      if (btn_valid) {
+        rs_flux_tmp.transform.root_key = rs_step_cursor;
+        rs_step_cursor = rs_flux_tmp.transform.progression_id;
+        rs_state = RS_FLUX_STEP6;
+      }
+      if (btn_back) { rs_state = RS_FLUX_TRANSFORM_TYPE; rs_step_cursor = TRANS_CHORD_HARMONIZE; }
+      break;
+
+    // ── FLUX STEP 6 — accords : progression ───────────────────────
+    case RS_FLUX_STEP6:
+      if (enc_up   && rs_step_cursor > 0)                     rs_step_cursor--;
+      if (enc_down && rs_step_cursor < PROGRESSION_COUNT-1)   rs_step_cursor++;
+      if (btn_valid) {
+        rs_flux_tmp.transform.progression_id = rs_step_cursor;
+        rs_state = RS_FLUX_STEP7;
+      }
+      if (btn_back) { rs_state = RS_FLUX_STEP5; rs_step_cursor = rs_flux_tmp.transform.root_key; }
+      break;
+
+    // ── FLUX STEP 7 — accords : mesures par accord ────────────────
+    case RS_FLUX_STEP7:
+      if (enc_up   && rs_flux_tmp.transform.bars_per_chord > CHORD_BARS_MIN) rs_flux_tmp.transform.bars_per_chord--;
+      if (enc_down && rs_flux_tmp.transform.bars_per_chord < CHORD_BARS_MAX) rs_flux_tmp.transform.bars_per_chord++;
+      if (btn_valid) _flux_save_and_return();
+      if (btn_back) { rs_state = RS_FLUX_STEP6; rs_step_cursor = rs_flux_tmp.transform.progression_id; }
+      break;
+
   }
 
   rs_draw_current();
@@ -749,6 +885,9 @@ static void rs_draw_current() {
     case RS_FLUX_STEP3:   rs_draw_step3();     break;
     case RS_FLUX_STEP4:   rs_draw_step4();     break;
     case RS_FLUX_STEP4_VAL: rs_draw_step4_val(); break;
+    case RS_FLUX_STEP5:   rs_draw_step5();     break;
+    case RS_FLUX_STEP6:   rs_draw_step6();     break;
+    case RS_FLUX_STEP7:   rs_draw_step7();     break;
   }
 }
 

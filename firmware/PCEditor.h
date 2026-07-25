@@ -95,12 +95,13 @@ void sendFullDumpToPC() {
     usbMIDI.sendSysEx(3, d); delay(2); }
 
   // 6. Dump chaque flux (0x0A) — encodage 7 bits des champs binaires
-  // F0 7D 0A idx n_in n_out active type transpose n_intervals interval0..3 [in: port m0 m1 m2]×n_in [out: port m0 m1 m2]×n_out F7
+  // F0 7D 0A idx n_in n_out active type transpose n_intervals interval0..3 root_key progression_id bars_per_chord [in: port m0 m1 m2]×n_in [out: port m0 m1 m2]×n_out F7
   // chan_mask encodé sur 3 octets 7-bit : bits 0-6 | bits 7-13 | bits 14-15
-  // type : TransformType (0=none 1=transpose 2=harmonize)
+  // type : TransformType (0=none 1=transpose 2=harmonize 3=chord harmonize)
   // transpose, interval0..3 : int8_t (-24..+24) biaisés de +64 pour rester dans 0-127 (SysEx 7 bits)
+  // root_key (0-11), progression_id (0-3), bars_per_chord (1-8) : petits entiers non signés, envoyés bruts
   for (uint8_t f = 0; f < flux_count; f++) {
-    uint8_t buf[3 + FLUX_MAX_IN*4 + FLUX_MAX_OUT*4 + 10];
+    uint8_t buf[3 + FLUX_MAX_IN*4 + FLUX_MAX_OUT*4 + 13];
     uint8_t pos = 0;
     buf[pos++] = 0x7D;
     buf[pos++] = 0x0A;
@@ -113,6 +114,9 @@ void sendFullDumpToPC() {
     buf[pos++] = flux_list[f].transform.n_intervals;
     for (uint8_t i = 0; i < HARMONIZE_MAX_INTERVALS; i++)
       buf[pos++] = (uint8_t)(flux_list[f].transform.intervals[i] + 64);
+    buf[pos++] = flux_list[f].transform.root_key;
+    buf[pos++] = flux_list[f].transform.progression_id;
+    buf[pos++] = flux_list[f].transform.bars_per_chord;
     for (uint8_t ii = 0; ii < flux_list[f].n_in; ii++) {
       buf[pos++] = flux_list[f].in[ii].port;
       buf[pos++] = flux_list[f].in[ii].chan_mask & 0x7F;
@@ -216,13 +220,28 @@ void handleEditorSysex(byte* data, unsigned size) {
           flux_list[f].n_out  = min(data[5], (uint8_t)FLUX_MAX_OUT);
           flux_list[f].active = (data[6] != 0);
           uint8_t t = data[7];
-          flux_list[f].transform.type      = (t <= TRANS_HARMONIZE) ? t : TRANS_NONE;   // borne : type invalide → pas de transform
+          flux_list[f].transform.type      = (t <= TRANS_CHORD_HARMONIZE) ? t : TRANS_NONE;   // borne : type invalide → pas de transform
           flux_list[f].transform.transpose = (int8_t)data[8] - 64;                       // biaisé +64 côté envoi
           flux_list[f].transform.n_intervals = min(data[9], (uint8_t)HARMONIZE_MAX_INTERVALS);
           for (uint8_t i = 0; i < HARMONIZE_MAX_INTERVALS; i++)
             flux_list[f].transform.intervals[i] = (int8_t)data[10 + i] - 64;
+          // root_key/progression_id/bars_per_chord : présents seulement si le client
+          // (weblink) a été mis à jour pour le format étendu — sinon défauts sûrs, pour
+          // ne pas bloquer l'édition de flux Transpose/Harmonize depuis un client ancien.
+          uint8_t pos;
+          if (size >= 17) {
+            flux_list[f].transform.root_key       = min(data[14], (uint8_t)11);
+            flux_list[f].transform.progression_id = min(data[15], (uint8_t)(PROGRESSION_COUNT - 1));
+            flux_list[f].transform.bars_per_chord = (data[16] >= CHORD_BARS_MIN && data[16] <= CHORD_BARS_MAX)
+                                                     ? data[16] : CHORD_BARS_DEFAULT;
+            pos = 17;
+          } else {
+            flux_list[f].transform.root_key       = 0;
+            flux_list[f].transform.progression_id = 0;
+            flux_list[f].transform.bars_per_chord = CHORD_BARS_DEFAULT;
+            pos = 14;
+          }
           // chan_mask encodé sur 3 octets 7-bit : bits 0-6 | bits 7-13 | bits 14-15
-          uint8_t pos = 14;
           for (uint8_t ii = 0; ii < flux_list[f].n_in && pos+3 < size; ii++, pos+=4) {
             flux_list[f].in[ii].port = data[pos];
             flux_list[f].in[ii].chan_mask = (uint16_t)data[pos+1]
@@ -279,7 +298,7 @@ void handleEditorSysex(byte* data, unsigned size) {
         usbMIDI.sendSysEx(3, d);
         usbMIDI.send_now(); }
       for (uint8_t f = 0; f < flux_count; f++) {
-        uint8_t buf[3 + FLUX_MAX_IN*4 + FLUX_MAX_OUT*4 + 10];
+        uint8_t buf[3 + FLUX_MAX_IN*4 + FLUX_MAX_OUT*4 + 13];
         uint8_t pos = 0;
         buf[pos++] = 0x7D; buf[pos++] = 0x0A; buf[pos++] = f;
         buf[pos++] = flux_list[f].n_in;
@@ -290,6 +309,9 @@ void handleEditorSysex(byte* data, unsigned size) {
         buf[pos++] = flux_list[f].transform.n_intervals;
         for (uint8_t i = 0; i < HARMONIZE_MAX_INTERVALS; i++)
           buf[pos++] = (uint8_t)(flux_list[f].transform.intervals[i] + 64);
+        buf[pos++] = flux_list[f].transform.root_key;
+        buf[pos++] = flux_list[f].transform.progression_id;
+        buf[pos++] = flux_list[f].transform.bars_per_chord;
         for (uint8_t ii = 0; ii < flux_list[f].n_in; ii++) {
           buf[pos++] = flux_list[f].in[ii].port;
           buf[pos++] = flux_list[f].in[ii].chan_mask & 0x7F;

@@ -866,8 +866,8 @@ function compareVersions(a, b) {
 }
 
 function encodeFluxMsg(idx, flux) {
-  // TransformType : 0=aucun 1=transpose 2=harmonize (cf. PCEditor.h)
-  const tr = flux.transform || { type: 0, transpose: 0, intervals: [0, 0, 0, 0] };
+  // TransformType : 0=aucun 1=transpose 2=harmonize 3=chord harmonize (cf. PCEditor.h)
+  const tr = flux.transform || { type: 0, transpose: 0, intervals: [0, 0, 0, 0], root_key: 0, progression_id: 0, bars_per_chord: CHORD_BARS_DEFAULT };
   // Compacte les intervalles non-nuls dans l'ordre (0 = slot inutilisé) —
   // le firmware ne lit que les n_intervals premiers, sans filtrer les trous.
   const nonzero = (tr.intervals || []).filter(v => v);
@@ -883,6 +883,9 @@ function encodeFluxMsg(idx, flux) {
     (tr.transpose || 0) + 64,          // biaisé +64 pour rester dans 0-127 (SysEx 7 bits)
     Math.min(nonzero.length, 4),        // n_intervals
     ...intervals.map(v => v + 64),
+    tr.root_key || 0,                   // 0-11, non biaisé (petit entier non signé)
+    tr.progression_id || 0,             // 0-3, non biaisé
+    tr.bars_per_chord || CHORD_BARS_DEFAULT,   // 1-8, non biaisé
   ];
   // chan_mask encodé sur 3 octets 7-bit : bits 0-6 | bits 7-13 | bits 14-15
   for (const i of flux.in) {
@@ -917,6 +920,10 @@ function fluxSummary(flux) {
   } else if (tr && tr.type === 2) {
     const n = (tr.intervals || []).filter(v => v).length;
     if (n > 0) trSuffix = ` (H×${n})`;
+  } else if (tr && tr.type === 3) {
+    const root = ROOT_KEY_LABELS[tr.root_key || 0];
+    const prog = PROGRESSION_LABELS[tr.progression_id || 0];
+    trSuffix = ` (${root}:${prog})`;
   }
   return `${ins || '?'} → ${outs || '?'}${trSuffix}`;
 }
@@ -1101,24 +1108,60 @@ function ChanPickerModal({ title, initMask, onConfirm, onCancel }) {
 }
 
 // ── Flux Editor ──────────────────────────────────────────────────────────────
-const TRANSFORM_NONE      = 0;
-const TRANSFORM_TRANSPOSE = 1;
-const TRANSFORM_HARMONIZE = 2;
+const TRANSFORM_NONE           = 0;
+const TRANSFORM_TRANSPOSE      = 1;
+const TRANSFORM_HARMONIZE      = 2;
+const TRANSFORM_CHORD_HARMONIZE = 3;
 const HARMONIZE_MAX_INTERVALS = 4;
+
+// Miroir des tables harmony.h (firmware) — TRANSFORM_CHORD_HARMONIZE
+// Libellés complets (pas de contrainte d'écran ici, contrairement à l'OLED
+// du device qui doit tronquer avec "..." — cf. PROGRESSION_PRESETS[i].short_label)
+const ROOT_KEY_LABELS = ['Do','Do#','Ré','Ré#','Mi','Fa','Fa#','Sol','Sol#','La','La#','Si'];
+const PROGRESSION_LABELS = [
+  'I - V - vi - IV',
+  'ii7 - V7 - Imaj7',
+  'I - vi - IV - V',
+  'vi - IV - I - V',
+  'I - IV - V',
+  'I - IV - vi - V',
+  'vi7 - ii7 - V7 - Imaj7',
+  'Imaj7 - vi7 - ii7 - V7',
+  'I7 - IV7 - V7',
+  'I - V - vi - iii - IV - I - IV - V',
+];
+const PROGRESSION_DESCRIPTIONS = [
+  'Progression pop la plus utilisée (« Axis progression »)',
+  'Cadence jazz ii-V-I, la plus classique',
+  'Progression doo-wop des années 50',
+  'Variante pop de la « Axis progression »',
+  "Le trio d'accords du rock'n'roll et du blues-rock",
+  'Variante pop très employée (proche de « Africa » - Toto)',
+  'Turnaround jazz classique avant le ii-V-I',
+  'Base des « Rhythm Changes » (I Got Rhythm)',
+  'Le squelette harmonique du blues (dominante partout)',
+  'La progression du Canon de Pachelbel',
+];
+const CHORD_BARS_MIN = 1;
+const CHORD_BARS_MAX = 8;
+const CHORD_BARS_DEFAULT = 1;
 
 function FluxEditor({ editingFlux, editingIdx, onSave, onCancel }) {
   const [draft, setDraft] = useState(() => {
     if (editingFlux) return JSON.parse(JSON.stringify(editingFlux));
-    return { in: [], out: [], active: true, transform: { type: TRANSFORM_NONE, transpose: 0, intervals: [0, 0, 0, 0] } };
+    return { in: [], out: [], active: true, transform: { type: TRANSFORM_NONE, transpose: 0, intervals: [0, 0, 0, 0], root_key: 0, progression_id: 0, bars_per_chord: CHORD_BARS_DEFAULT } };
   });
   const [picker, setPicker] = useState(null); // {side, port}
 
-  const transform = draft.transform || { type: TRANSFORM_NONE, transpose: 0, intervals: [0, 0, 0, 0] };
+  const transform = draft.transform || { type: TRANSFORM_NONE, transpose: 0, intervals: [0, 0, 0, 0], root_key: 0, progression_id: 0, bars_per_chord: CHORD_BARS_DEFAULT };
 
   function setTransformType(type) {
     setDraft(f => ({ ...f, transform: { ...(f.transform || {}), type,
       transpose: (f.transform && f.transform.transpose) || 0,
-      intervals: (f.transform && f.transform.intervals) || [0, 0, 0, 0] } }));
+      intervals: (f.transform && f.transform.intervals) || [0, 0, 0, 0],
+      root_key: (f.transform && f.transform.root_key) || 0,
+      progression_id: (f.transform && f.transform.progression_id) || 0,
+      bars_per_chord: (f.transform && f.transform.bars_per_chord) || CHORD_BARS_DEFAULT } }));
   }
 
   function setTranspose(v) {
@@ -1133,6 +1176,21 @@ function FluxEditor({ editingFlux, editingIdx, onSave, onCancel }) {
       intervals[slot] = clamped;
       return { ...f, transform: { ...f.transform, intervals } };
     });
+  }
+
+  function setRootKey(v) {
+    const clamped = Math.max(0, Math.min(11, v));
+    setDraft(f => ({ ...f, transform: { ...f.transform, root_key: clamped } }));
+  }
+
+  function setProgressionId(v) {
+    const clamped = Math.max(0, Math.min(PROGRESSION_LABELS.length - 1, v));
+    setDraft(f => ({ ...f, transform: { ...f.transform, progression_id: clamped } }));
+  }
+
+  function setBarsPerChord(v) {
+    const clamped = Math.max(CHORD_BARS_MIN, Math.min(CHORD_BARS_MAX, v));
+    setDraft(f => ({ ...f, transform: { ...f.transform, bars_per_chord: clamped } }));
   }
 
   function toggleIn(portIdx) {
@@ -1252,6 +1310,7 @@ function FluxEditor({ editingFlux, editingIdx, onSave, onCancel }) {
           <button className={`btn${transform.type === TRANSFORM_NONE ? ' primary' : ''}`} onClick={() => setTransformType(TRANSFORM_NONE)}>Aucun</button>
           <button className={`btn${transform.type === TRANSFORM_TRANSPOSE ? ' primary' : ''}`} onClick={() => setTransformType(TRANSFORM_TRANSPOSE)}>Transpose</button>
           <button className={`btn${transform.type === TRANSFORM_HARMONIZE ? ' primary' : ''}`} onClick={() => setTransformType(TRANSFORM_HARMONIZE)}>Harmonize</button>
+          <button className={`btn${transform.type === TRANSFORM_CHORD_HARMONIZE ? ' primary' : ''}`} onClick={() => setTransformType(TRANSFORM_CHORD_HARMONIZE)}>Accords</button>
         </div>
       </div>
 
@@ -1289,6 +1348,45 @@ function FluxEditor({ editingFlux, editingIdx, onSave, onCancel }) {
           </div>
         );
       })}
+
+      {transform.type === TRANSFORM_CHORD_HARMONIZE && (
+        <>
+          <div className="flux-editor-row">
+            <div className="flux-editor-label">Tonique</div>
+            <select
+              value={transform.root_key || 0}
+              onChange={e => setRootKey(parseInt(e.target.value, 10))}
+            >
+              {ROOT_KEY_LABELS.map((lbl, i) => <option key={i} value={i}>{lbl}</option>)}
+            </select>
+          </div>
+          <div className="flux-editor-row">
+            <div className="flux-editor-label">Progression</div>
+            <select
+              value={transform.progression_id || 0}
+              onChange={e => setProgressionId(parseInt(e.target.value, 10))}
+            >
+              {PROGRESSION_LABELS.map((lbl, i) => <option key={i} value={i}>{lbl}</option>)}
+            </select>
+          </div>
+          <div className="flux-editor-row">
+            <div className="flux-editor-label"></div>
+            <div style={{ fontSize: 12, color: '#9ca3af' }}>
+              {PROGRESSION_DESCRIPTIONS[transform.progression_id || 0]}
+            </div>
+          </div>
+          <div className="flux-editor-row">
+            <div className="flux-editor-label">Mesures/accord</div>
+            <div className="port-buttons" style={{ alignItems: 'center', gap: 8 }}>
+              <button className="btn" onClick={() => setBarsPerChord((transform.bars_per_chord || CHORD_BARS_DEFAULT) - 1)} disabled={(transform.bars_per_chord || CHORD_BARS_DEFAULT) <= CHORD_BARS_MIN}>−</button>
+              <span style={{ minWidth: 40, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
+                {transform.bars_per_chord || CHORD_BARS_DEFAULT}
+              </span>
+              <button className="btn" onClick={() => setBarsPerChord((transform.bars_per_chord || CHORD_BARS_DEFAULT) + 1)} disabled={(transform.bars_per_chord || CHORD_BARS_DEFAULT) >= CHORD_BARS_MAX}>+</button>
+            </div>
+          </div>
+        </>
+      )}
 
       <div className="flux-editor-actions">
         <button
@@ -2112,13 +2210,23 @@ function App() {
           const n_in   = body[ptr++];
           const n_out  = body[ptr++];
           const active = body[ptr++] !== 0;
-          // TransformType : 0=aucun 1=transpose 2=harmonize (cf. PCEditor.h)
+          // TransformType : 0=aucun 1=transpose 2=harmonize 3=chord harmonize (cf. PCEditor.h)
           const type        = body[ptr++];
           const transpose   = body[ptr++] - 64; // biaisé +64 côté firmware
           const n_intervals = body[ptr++];
           const intervals = [];
           for (let i = 0; i < 4; i++) intervals.push(body[ptr++] - 64);
           for (let i = n_intervals; i < 4; i++) intervals[i] = 0;   // slots au-delà de n_intervals : inutilisés
+          // root_key/progression_id/bars_per_chord : présents seulement si le firmware
+          // connecté a été mis à jour pour le format étendu — sinon défauts sûrs.
+          let root_key, progression_id, bars_per_chord;
+          if (ptr + 3 <= body.length) {
+            root_key       = body[ptr++];
+            progression_id = body[ptr++];
+            bars_per_chord = body[ptr++];
+          } else {
+            root_key = 0; progression_id = 0; bars_per_chord = CHORD_BARS_DEFAULT;
+          }
           // chan_mask : 3 octets 7-bit → bits 0-6 | bits 7-13 | bits 14-15
           const ins = [];
           for (let i = 0; i < n_in;  i++) {
@@ -2137,7 +2245,7 @@ function App() {
             outs.push({ port, chan_mask: lo | (mid << 7) | (top << 14) });
           }
           const fluxes = [...prev.fluxes];
-          fluxes[idx] = { in: ins, out: outs, active, transform: { type, transpose, intervals } };
+          fluxes[idx] = { in: ins, out: outs, active, transform: { type, transpose, intervals, root_key, progression_id, bars_per_chord } };
           return { ...prev, fluxes };
         }
 

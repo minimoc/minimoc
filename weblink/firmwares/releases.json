@@ -1,5 +1,11 @@
 [
   
+ {
+    "version": "v0.4.1",
+    "filename": "minimoc_v0.4.1.hex",
+    "date": "2026-07-21",
+    "description": "Correction d'un problème de boutons dans la gestion des flux"
+  },
   {
     "version": "v0.4.0",
     "filename": "minimoc_v0.4.0.hex",

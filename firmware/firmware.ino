@@ -28,6 +28,7 @@ void traceLED() {
 
 #include "graphics.h"
 #include "logic.h"
+#include "harmony.h"       // TRANS_CHORD_HARMONIZE — après logic.h (FluxTransform), avant monitor.h/_midi.h/routing_submenu.h
 #include "monitor.h"       // données VU-mètre — doit précéder sd_recorder (mon_push appelé dans rec_push)
 #include "sd_recorder.h"   // déclare sd, sd_ok — doit précéder sd_presets et preset
 #include "sd_presets.h"    // sd_preset_save/load/exists, SD_PRESET_MAX

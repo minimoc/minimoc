@@ -8,6 +8,9 @@
 //   [1 oct] flux_count
 //   [...]   flux_list[0..flux_count-1] (flux_count × sizeof(Flux), inclut transform)
 //
+// Format v5 (legacy) : flux_list avec FluxTransform sans les champs accord
+// (root_key/progression_id/bars_per_chord) → migration automatique (voir
+// FluxV5Legacy plus bas).
 // Format v4 (legacy) : flux_list avec `transpose` brut au lieu de `transform`
 // (union TransformType) → migration automatique (voir FluxV4Legacy plus bas).
 // Format v3 (legacy) : flux_list sans transform du tout → migration automatique
@@ -17,7 +20,7 @@
 #define SD_PRESET_MAX   32
 #define SD_PRESET_DIR   "/PRESETS"
 #define SD_PRESET_MAGIC 0x4D4E4D43UL   // 'MNMC' little-endian
-#define SD_PRESET_VER   5              // v1=route_matrix, v2=+basic+flux(chan mono), v3=flux(chan_mask multi), v4=+flux.transpose, v5=+flux.transform (TransformType)
+#define SD_PRESET_VER   6              // v1=route_matrix, v2=+basic+flux(chan mono), v3=flux(chan_mask multi), v4=+flux.transpose, v5=+flux.transform (TransformType), v6=+flux.transform accords (TRANS_CHORD_HARMONIZE)
 
 // Layout figé de `struct Flux` tel qu'écrit par le firmware v3, avant l'ajout
 // d'un transform. Sert uniquement à relire les presets SD existants —
@@ -41,6 +44,26 @@ struct FluxV4Legacy {
     FluxOutSlot out[FLUX_MAX_OUT];
     bool        active;
     int8_t      transpose;
+};
+
+// Layout figé de FluxTransform tel qu'écrit par le firmware v5, avant l'ajout
+// de TRANS_CHORD_HARMONIZE (root_key/progression_id/bars_per_chord). Sert
+// uniquement à relire les presets SD existants — ne pas modifier même si
+// FluxTransform évolue encore par la suite.
+struct FluxTransformV5Legacy {
+    uint8_t type;
+    int8_t  transpose;
+    uint8_t n_intervals;
+    int8_t  intervals[HARMONIZE_MAX_INTERVALS];
+};
+
+struct FluxV5Legacy {
+    uint8_t                n_in;
+    uint8_t                n_out;
+    FluxInSlot              in[FLUX_MAX_IN];
+    FluxOutSlot             out[FLUX_MAX_OUT];
+    bool                    active;
+    FluxTransformV5Legacy   transform;
 };
 
 struct SdPresetHeader {
@@ -137,7 +160,7 @@ bool sd_preset_load(uint8_t num) {
     SdPresetHeader hdr;
     if ((size_t)f.read(&hdr, sizeof(hdr)) != sizeof(hdr) ||
         hdr.magic != SD_PRESET_MAGIC ||
-        (hdr.version != 1 && hdr.version != 3 && hdr.version != 4 && hdr.version != 5)) {
+        (hdr.version != 1 && hdr.version != 3 && hdr.version != 4 && hdr.version != 5 && hdr.version != 6)) {
         f.close();
         return false;
     }
@@ -204,7 +227,35 @@ bool sd_preset_load(uint8_t num) {
             }
         }
         recompute_route_matrix();
-    } else {   // v5 : basic_matrix + flux (avec transform)
+    } else if (hdr.version == 5) {
+        // v5 : basic_matrix + flux avec FluxTransform sans les champs accord
+        // → migration vers `transform` avec défauts sûrs (root=Do, prog=0, 1 mesure)
+        f.read(basic_matrix, sizeof(basic_matrix));
+        uint8_t fc = 0;
+        f.read(&fc, 1);
+        flux_count = min(fc, (uint8_t)FLUX_MAX);
+        if (flux_count > 0) {
+            FluxV5Legacy legacy[FLUX_MAX];
+            f.read(legacy, flux_count * sizeof(FluxV5Legacy));
+            for (uint8_t i = 0; i < flux_count; i++) {
+                flux_list[i].n_in  = legacy[i].n_in;
+                flux_list[i].n_out = legacy[i].n_out;
+                memcpy(flux_list[i].in,  legacy[i].in,  sizeof(legacy[i].in));
+                memcpy(flux_list[i].out, legacy[i].out, sizeof(legacy[i].out));
+                flux_list[i].active = legacy[i].active;
+                memset(&flux_list[i].transform, 0, sizeof(FluxTransform));
+                flux_list[i].transform.type        = legacy[i].transform.type;
+                flux_list[i].transform.transpose   = legacy[i].transform.transpose;
+                flux_list[i].transform.n_intervals = legacy[i].transform.n_intervals;
+                memcpy(flux_list[i].transform.intervals, legacy[i].transform.intervals,
+                       sizeof(legacy[i].transform.intervals));
+                flux_list[i].transform.root_key       = 0;
+                flux_list[i].transform.progression_id = 0;
+                flux_list[i].transform.bars_per_chord = CHORD_BARS_DEFAULT;
+            }
+        }
+        recompute_route_matrix();
+    } else {   // v6 : basic_matrix + flux (avec transform incluant les champs accord)
         f.read(basic_matrix, sizeof(basic_matrix));
         uint8_t fc = 0;
         f.read(&fc, 1);

@@ -286,6 +286,9 @@ void handleNoteOn(byte midiIn, byte channel, byte note, byte velocity, byte sour
                 _send_offset_note_on(out, note, 0, velocity, dc, source);   // note reçue, inchangée
                 for (uint8_t i = 0; i < tr.n_intervals; i++)
                     _send_offset_note_on(out, note, tr.intervals[i], velocity, dc, source);
+            } else if (tr.type == TRANS_CHORD_HARMONIZE) {
+                int8_t offset = harmony_note_on_offset(tr, out, dc, note);
+                _send_offset_note_on(out, note, offset, velocity, dc, source);
             } else {
                 int8_t offset = (tr.type == TRANS_NOTE_TRANSPOSE) ? tr.transpose : 0;
                 _send_offset_note_on(out, note, offset, velocity, dc, source);
@@ -307,6 +310,9 @@ void handleNoteOff(byte midiIn, byte channel, byte note, byte velocity, byte sou
                 _send_offset_note_off(out, note, 0, velocity, dc, source);
                 for (uint8_t i = 0; i < tr.n_intervals; i++)
                     _send_offset_note_off(out, note, tr.intervals[i], velocity, dc, source);
+            } else if (tr.type == TRANS_CHORD_HARMONIZE) {
+                int8_t offset = harmony_note_off_offset(tr, out, dc, note);
+                _send_offset_note_off(out, note, offset, velocity, dc, source);
             } else {
                 int8_t offset = (tr.type == TRANS_NOTE_TRANSPOSE) ? tr.transpose : 0;
                 _send_offset_note_off(out, note, offset, velocity, dc, source);
