@@ -7,6 +7,124 @@ Le versionnage suit [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [0.5.0] — 2026-07-25
+
+### Ajouté
+
+- **Générateurs — Motifs de batterie pré-enregistrés** : troisième type de générateur
+  (`GEN_PATTERN`). Rejoue en boucle un motif de batterie figé dans le firmware (Amen
+  Break, Funky Drummer, Backbeat Simple — interprétations simplifiées, pas des
+  transcriptions note pour note), toujours calé sur le maître SYNC (pas de mode libre).
+  Moteur polyphonique à 4 voix simultanées pour gérer les hits qui tombent ensemble
+  (ex. grosse caisse + charley sur le même pas).
+- **Transport relié aux générateurs** : Play/Pause/Stop (écran TRANSPORT ou éditeur web)
+  contrôle désormais aussi les générateurs (LFO, Euclidien, Motif) — Stop/Pause les gèle
+  proprement (Note OFF immédiate, jamais de note bloquée), Continue reprend exactement
+  où c'était plutôt que de redémarrer le motif.
+- Format de preset SD **v9** (`Generator.pattern_id`), migration automatique des presets v8.
+- Éditeur web : sélecteur de motif dans l'écran GENERATEURS, protocole étendu de façon
+  rétrocompatible (octet optionnel en fin de message SysEx).
+
+### Corrigé
+
+- **Décalage rythmique systématique d'une division** sur les générateurs Euclidien et
+  Motif en mode synchro : le motif était évalué après avoir attendu une division
+  complète de pulses d'horloge au lieu du début du pas, décalant chaque hit en retard
+  d'un pas entier (ex. 1/16) par rapport à la grille.
+
+## [0.4.2] — 2026-07-25
+
+### Ajouté
+
+- **Système de générateurs** : jusqu'à 16 générateurs de flux MIDI internes,
+  indépendants de toute entrée, routables vers plusieurs sorties/canaux comme un Flux.
+  Nouveau sous-menu OLED GENERATEURS (dans ROUTAGE, au même niveau que FLUX).
+  - **LFO** : 5 formes d'onde (triangle, sinus, carré, dent de scie, aléatoire
+    échantillonné-bloqué), mode libre (Hz, 0.1–50.0) ou synchronisé à l'horloge MIDI
+    (7 divisions, 1/16 à 4 mesures), sortie en CC continu (numéro configurable),
+    amplitude et valeur centrale réglables.
+  - **Euclidien** : séquenceur rythmique (algorithme de Bjorklund — répartition de
+    pulses sur un nombre de pas configurable, avec rotation), sortie en Note ON/OFF,
+    durée de gate réglable en % du pas.
+  - Accélération de l'encodeur sur tous les réglages numériques du sous-menu
+    (identique au mécanisme déjà utilisé pour le BPM).
+- **Éditeur web** : nouvelle section GENERATEURS (protocole SysEx étendu, opcodes
+  `0x12`/`0x13`), édition complète des deux types de générateur. Appui maintenu (+/-)
+  généralisé à tous les champs numériques de l'éditeur, Flux compris.
+- Format de preset SD v7 (générateurs) puis v8 (type Euclidien), migration automatique.
+
+## [0.4.1] — 2026-07-21 → 2026-07-25
+
+### Ajouté
+
+- **Transformateur "Accords"** (`TRANS_CHORD_HARMONIZE`) : un Flux peut réinterpréter
+  une note reçue comme un degré de gamme et la reprojeter sur l'accord courant d'une
+  progression en cours de lecture (10 progressions prédéfinies : I-V-vi-IV, ii7-V7-Imaj7,
+  blues, Canon de Pachelbel...), calée sur l'horloge/le transport. Tonique et nombre de
+  mesures par accord réglables.
+
+### Corrigé
+
+- Corrections diverses sur les boutons de l'écran FLUX.
+- Désactivation de l'enregistrement SD en continu (fonctionnalité en cours de retravail).
+
+### Divers
+
+- Ajout de fichiers spécifiques pour faciliter le flashage (patch IDE Arduino).
+
+## [0.4.0] — 2026-07-13
+
+### Ajouté
+
+- **Transformateurs de Flux — Transpose et Harmonize** : chaque Flux peut porter une
+  transformation optionnelle sur les notes routées.
+  - **Transpose** : décalage fixe en demi-tons (-24 à +24).
+  - **Harmonize** : empile jusqu'à 4 notes supplémentaires par rapport à la note reçue,
+    intervalles réglables individuellement.
+
+## [0.3.0] — 2026-07-12
+
+### Ajouté
+
+- **Maître SYNC étendu + écran TRANSPORT** : le maître d'horloge peut désormais être
+  l'horloge interne de MiniMoc (tempo réglable, 20–300 BPM) en plus des 5 entrées
+  physiques/USB existantes.
+  - Écran TRANSPORT dédié : Play/Pause/Stop (clic encodeur), Record/Avance/Rewind via
+    MIDI Machine Control (gestes chordés BACK + encodeur), réglage du tempo par pas de 1
+    (accéléré à 5 en rotation rapide, même mécanisme repris plus tard pour les
+    générateurs).
+  - Période de rafraîchissement du BPM affiché réglable depuis SYSTEM.
+- Fichier 3D pour un socle du boîtier.
+
+## [0.2.2b] — 2026-07-11
+
+### Ajouté
+
+- Fichiers 3D pour le boîtier (impression) et fichiers KiCad du PCB du dessous.
+- Scripts d'intégration Ableton Live (auto-création de pistes) — en cours.
+
+### Modifié
+
+- Désactivation de l'enregistrement automatique au démarrage.
+
+## [0.2.2] — 2026-06-16
+
+### Corrigé
+
+- Synchronisation du "smart mirror" (miroir USB vers le DAW) pour le Clock/Start/Stop
+  du maître SYNC.
+- Correctifs divers sur l'éditeur web.
+
+## [0.2.1] — 2026-06-14
+
+### Ajouté
+
+- Affichage du BPM reçu (calculé depuis l'horloge MIDI entrante) sur l'écran MONITOR.
+- Éditeur web : possibilité de choisir un firmware `.hex` en ligne (liste des releases
+  publiées) ou un fichier local, pour la mise à jour OTA.
+
+---
+
 ## [0.2] — 2026-06-01
 
 ### Ajouté
