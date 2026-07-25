@@ -135,13 +135,15 @@ void sendFullDumpToPC() {
   // 6b. Générateurs : count (0x13) puis dump de chaque générateur (0x12)
   // F0 7D 12 idx type active waveform sync_mode rate_m0 rate_m1 division_idx
   //    depth center cc_number note euclid_steps euclid_pulses euclid_rotation
-  //    gate_percent n_out [port m0 m1 m2]×n_out F7
+  //    gate_percent n_out [port m0 m1 m2]×n_out pattern_id F7
   // rate_x10hz (0-500) encodé sur 2 octets 7-bit (comme le BPM, cf. 7b plus bas) ;
   // chan_mask de chaque sortie sur 3 octets 7-bit, comme pour Flux ci-dessus.
+  // pattern_id : octet ajouté en fin de message (v9) — un vieux weblink qui
+  // ignore cet octet supplémentaire continue de fonctionner sans erreur.
   { uint8_t d[] = {0x7D, 0x13, gen_count};
     usbMIDI.sendSysEx(3, d); delay(2); }
   for (uint8_t g = 0; g < gen_count; g++) {
-    uint8_t buf[3 + 16 + FLUX_MAX_OUT*4];
+    uint8_t buf[3 + 17 + FLUX_MAX_OUT*4];
     uint8_t pos = 0;
     buf[pos++] = 0x7D;
     buf[pos++] = 0x12;
@@ -168,6 +170,7 @@ void sendFullDumpToPC() {
       buf[pos++] = (gen_list[g].out[oi].chan_mask >> 7)  & 0x7F;
       buf[pos++] = (gen_list[g].out[oi].chan_mask >> 14) & 0x03;
     }
+    buf[pos++] = gen_list[g].pattern_id;
     usbMIDI.sendSysEx(pos, buf); delay(2);
   }
 
@@ -309,13 +312,15 @@ void handleEditorSysex(byte* data, unsigned size) {
       }
       break;
 
-    case 0x12:   // ADD/UPDATE GENERATOR — F0 7D 12 idx type active waveform sync_mode rate_m0 rate_m1 division_idx depth center cc_number note euclid_steps euclid_pulses euclid_rotation gate_percent n_out [port m0 m1 m2]×n_out F7
+    case 0x12:   // ADD/UPDATE GENERATOR — F0 7D 12 idx type active waveform sync_mode rate_m0 rate_m1 division_idx depth center cc_number note euclid_steps euclid_pulses euclid_rotation gate_percent n_out [port m0 m1 m2]×n_out [pattern_id] F7
+      // pattern_id (v9) : octet optionnel en fin de message — absent si envoyé
+      // par un weblink antérieur à l'ajout du type PATTERN, défaut 0 (Amen Break).
       if (size >= 20) {
         uint8_t g = data[3];
         if (g <= gen_count && g < GEN_MAX) {
           if (g == gen_count) gen_count++;
           memset(&gen_list[g], 0, sizeof(Generator));   // zeroise avant écriture — évite valeurs résiduelles
-          gen_list[g].type         = (data[4] <= GEN_EUCLID) ? data[4] : GEN_LFO;
+          gen_list[g].type         = (data[4] <= GEN_PATTERN) ? data[4] : GEN_LFO;
           gen_list[g].active       = (data[5] != 0);
           gen_list[g].waveform     = min(data[6], (uint8_t)(LFO_WAVEFORM_COUNT - 1));
           gen_list[g].sync_mode    = (data[7] <= LFO_SYNC_CLOCK) ? data[7] : LFO_SYNC_FREE;
@@ -339,6 +344,7 @@ void handleEditorSysex(byte* data, unsigned size) {
                                           | ((uint16_t)data[pos+2] << 7)
                                           | ((uint16_t)data[pos+3] << 14);
           }
+          gen_list[g].pattern_id = (pos < size && data[pos] < DRUM_PATTERN_COUNT) ? data[pos] : 0;
           // Repart propre — même geste que _gen_save_and_return() (generators_submenu.h)
           memset(&gen_rt[g], 0, sizeof(GeneratorRuntime));
         }
@@ -421,7 +427,7 @@ void handleEditorSysex(byte* data, unsigned size) {
         usbMIDI.sendSysEx(3, d);
         usbMIDI.send_now(); }
       for (uint8_t g = 0; g < gen_count; g++) {
-        uint8_t buf[3 + 16 + FLUX_MAX_OUT*4];
+        uint8_t buf[3 + 17 + FLUX_MAX_OUT*4];
         uint8_t pos = 0;
         buf[pos++] = 0x7D; buf[pos++] = 0x12; buf[pos++] = g;
         buf[pos++] = gen_list[g].type;
@@ -446,6 +452,7 @@ void handleEditorSysex(byte* data, unsigned size) {
           buf[pos++] = (gen_list[g].out[oi].chan_mask >> 7)  & 0x7F;
           buf[pos++] = (gen_list[g].out[oi].chan_mask >> 14) & 0x03;
         }
+        buf[pos++] = gen_list[g].pattern_id;
         usbMIDI.sendSysEx(pos, buf);
         usbMIDI.send_now();
       }

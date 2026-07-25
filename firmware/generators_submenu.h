@@ -1,21 +1,23 @@
 #pragma once
-// generators_submenu.h — IHM des générateurs (LFO + séquenceur euclidien)
+// generators_submenu.h — IHM des générateurs (LFO + euclidien + motifs)
 //
 // Calquée sur routing_submenu.h (mêmes conventions : état, buffer temporaire,
 // écrans u8g2). Un générateur n'a pas d'entrée : le wizard n'a donc qu'une
 // étape "sorties" (identique à STEP2/STEP2_CH de routing_submenu.h) au lieu
-// des deux (entrées + sorties) d'un Flux. GS_SYNC_MODE/GS_RATE/GS_DIVISION
-// et GS_OUT/GS_OUT_CH sont partagés par les deux types de générateur ; le
-// reste du chemin diverge selon GS_TYPE (voir Generator.type, logic.h).
+// des deux (entrées + sorties) d'un Flux. GS_DIVISION/GS_GATE_PERCENT et
+// GS_OUT/GS_OUT_CH sont partagés entre plusieurs types ; le reste du chemin
+// diverge selon GS_TYPE (voir Generator.type, logic.h). GEN_PATTERN est
+// toujours synchro (pas de GS_SYNC_MODE/GS_RATE dans son chemin — un motif
+// n'a de sens que calé sur le tempo, cf. logic.h).
 //
 // États :
 //   GS_LIST         : liste des générateurs (max GEN_MAX) + [+] nouveau
 //   GS_ACTION       : menu contextuel Modifier / Supprimer
-//   GS_TYPE         : choix LFO / Euclidien
+//   GS_TYPE         : choix LFO / Euclidien / Motif
 //   GS_WAVEFORM     : choix de la forme d'onde (LFO uniquement)
-//   GS_SYNC_MODE    : Libre (Hz) / Synchro (horloge MIDI) — partagé
-//   GS_RATE         : réglage fréquence, mode libre — partagé
-//   GS_DIVISION     : réglage division, mode synchro — partagé
+//   GS_SYNC_MODE    : Libre (Hz) / Synchro (horloge MIDI) — LFO/EUCLID
+//   GS_RATE         : réglage fréquence, mode libre — LFO/EUCLID
+//   GS_DIVISION     : réglage division, mode synchro — partagé (3 types)
 //   GS_DEPTH        : amplitude (0-63) — LFO
 //   GS_CENTER       : valeur centrale (0-127) — LFO
 //   GS_CC_NUMBER    : numéro de CC ciblé (0-127) — LFO
@@ -23,7 +25,8 @@
 //   GS_STEPS        : nb de pas (1-16) — EUCLID
 //   GS_PULSES       : nb de hits (0-steps) — EUCLID
 //   GS_ROTATION     : rotation du motif (0-steps-1) — EUCLID
-//   GS_GATE_PERCENT : durée du gate en % du pas (1-100) — EUCLID
+//   GS_PATTERN      : choix du motif de batterie (DRUM_PATTERNS) — PATTERN uniquement
+//   GS_GATE_PERCENT : durée du gate en % du pas (1-100) — EUCLID + PATTERN
 //   GS_OUT          : sélection ports de sortie + canaux — partagé
 //   GS_OUT_CH       : picker canaux sortie (overlay) — partagé
 
@@ -42,6 +45,7 @@ enum GsSubState {
   GS_STEPS,
   GS_PULSES,
   GS_ROTATION,
+  GS_PATTERN,
   GS_GATE_PERCENT,
   GS_OUT,
   GS_OUT_CH,
@@ -60,7 +64,7 @@ static uint8_t   gs_ch_cursor  = 0;   // GS_OUT_CH : curseur 0-15
 static const char* GS_WAVEFORM_ITEMS[] = { "Triangle", "Sinus", "Carre", "Scie", "Aleatoire" };
 static const char* GS_WAVEFORM_SHORT[] = { "Tri", "Sin", "Car", "Sci", "Ale" };
 static const char* GS_SYNC_ITEMS[]     = { "Libre (Hz)", "Synchro" };
-static const char* GS_TYPE_ITEMS[]     = { "LFO", "Euclidien" };
+static const char* GS_TYPE_ITEMS[]     = { "LFO", "Euclidien", "Motif" };
 
 // Accélération de l'encodeur sur les réglages numériques (RATE/DEPTH/CENTER/
 // CC_NUMBER) — même mécanisme que le réglage BPM (transport_submenu.h) : pas
@@ -97,7 +101,7 @@ static void _gen_summary(uint8_t idx, char* buf, uint8_t maxlen) {
     _app(tmp);
     snprintf(tmp, sizeof(tmp), " CC%u", g.cc_number);
     _app(tmp);
-  } else {
+  } else if (g.type == GEN_EUCLID) {
     _app("Euc ");
     snprintf(tmp, sizeof(tmp), "%u/%u", g.euclid_pulses, g.euclid_steps);
     _app(tmp);
@@ -106,6 +110,10 @@ static void _gen_summary(uint8_t idx, char* buf, uint8_t maxlen) {
     _app(" "); _app(tmp);
     snprintf(tmp, sizeof(tmp), " N%u", g.note);
     _app(tmp);
+  } else {   // GEN_PATTERN — toujours synchro
+    _app("Pat ");
+    _app(g.pattern_id < DRUM_PATTERN_COUNT ? DRUM_PATTERNS[g.pattern_id].name : "?");
+    _app(" "); _app(tmp);
   }
   _app(" \x10 ");   // \x10 = →
   for (uint8_t oi = 0; oi < g.n_out; oi++) {
@@ -214,6 +222,21 @@ void gs_draw_division() {
     if (i == gs_step_cursor) { u8g2.drawBox(0, y-6, SCREEN_W, 7); u8g2.setDrawColor(0); }
     u8g2.setFont(UI_FONT_SMALL);
     u8g2.drawStr(8, y, LFO_DIVISIONS[i].label);
+    u8g2.setDrawColor(1);
+  }
+  u8g2.sendBuffer();
+}
+
+void gs_draw_pattern() {
+  u8g2.clearBuffer();
+  u8g2.setFont(UI_FONT_TITLE);
+  u8g2.drawStr(0, 10, "MOTIF");
+  u8g2.drawHLine(0, 12, SCREEN_W);
+  u8g2.setFont(UI_FONT_BODY);
+  for (uint8_t i = 0; i < DRUM_PATTERN_COUNT; i++) {
+    uint8_t y = 22 + i * 10;
+    if (i == gs_step_cursor) { u8g2.drawBox(0, y-8, SCREEN_W, 10); u8g2.setDrawColor(0); }
+    u8g2.drawStr(8, y, DRUM_PATTERNS[i].name);
     u8g2.setDrawColor(1);
   }
   u8g2.sendBuffer();
@@ -340,7 +363,8 @@ void gs_draw_out() {
   u8g2.clearBuffer();
   u8g2.setFont(UI_FONT_TITLE);
   char title[20];
-  snprintf(title, sizeof(title), "%s \x11 SORTIES", gs_gen_tmp.type == GEN_LFO ? "LFO" : "EUC");
+  const char* type_lbl = (gs_gen_tmp.type == GEN_LFO) ? "LFO" : (gs_gen_tmp.type == GEN_EUCLID) ? "EUC" : "PAT";
+  snprintf(title, sizeof(title), "%s \x11 SORTIES", type_lbl);
   u8g2.drawStr(0, 10, title);
   u8g2.drawHLine(0, 12, SCREEN_W);
   u8g2.setFont(UI_FONT_BODY);
@@ -441,6 +465,7 @@ bool gs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
           gs_gen_tmp.euclid_pulses   = 3;
           gs_gen_tmp.euclid_rotation = 0;
           gs_gen_tmp.gate_percent    = 50;
+          gs_gen_tmp.pattern_id      = 0;
           gs_gen_idx    = gen_count;
           gs_step_cursor= gs_gen_tmp.type;
           gs_state = GS_TYPE;
@@ -486,9 +511,13 @@ bool gs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
         if (gs_gen_tmp.type == GEN_LFO) {
           gs_step_cursor = gs_gen_tmp.waveform;
           gs_state = GS_WAVEFORM;
-        } else {
+        } else if (gs_gen_tmp.type == GEN_EUCLID) {
           gs_step_cursor = gs_gen_tmp.sync_mode;
           gs_state = GS_SYNC_MODE;
+        } else {   // GEN_PATTERN — toujours synchro, pas d'étape GS_SYNC_MODE/GS_RATE
+          gs_gen_tmp.sync_mode = LFO_SYNC_CLOCK;
+          gs_step_cursor = gs_gen_tmp.pattern_id;
+          gs_state = GS_PATTERN;
         }
       }
       if (btn_back) { gs_state = GS_LIST; gs_cursor = gs_gen_idx; }
@@ -543,9 +572,14 @@ bool gs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
       if (enc_down && gs_step_cursor < LFO_DIVISION_COUNT-1)   gs_step_cursor++;
       if (btn_valid) {
         gs_gen_tmp.division_idx = gs_step_cursor;
-        gs_state = (gs_gen_tmp.type == GEN_LFO) ? GS_DEPTH : GS_NOTE;
+        if      (gs_gen_tmp.type == GEN_LFO)     gs_state = GS_DEPTH;
+        else if (gs_gen_tmp.type == GEN_EUCLID)  gs_state = GS_NOTE;
+        else                                     gs_state = GS_GATE_PERCENT;   // GEN_PATTERN
       }
-      if (btn_back) { gs_step_cursor = gs_gen_tmp.sync_mode; gs_state = GS_SYNC_MODE; }
+      if (btn_back) {
+        if (gs_gen_tmp.type == GEN_PATTERN) { gs_step_cursor = gs_gen_tmp.pattern_id; gs_state = GS_PATTERN; }
+        else                                { gs_step_cursor = gs_gen_tmp.sync_mode;  gs_state = GS_SYNC_MODE; }
+      }
       break;
 
     // ── DEPTH ────────────────────────────────────────────────────
@@ -656,6 +690,18 @@ bool gs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
       break;
     }
 
+    // ── PATTERN — choix du motif de batterie ──────────────────────
+    case GS_PATTERN:
+      if (enc_up   && gs_step_cursor > 0)                     gs_step_cursor--;
+      if (enc_down && gs_step_cursor < DRUM_PATTERN_COUNT-1)  gs_step_cursor++;
+      if (btn_valid) {
+        gs_gen_tmp.pattern_id = gs_step_cursor;
+        gs_step_cursor = gs_gen_tmp.division_idx;
+        gs_state = GS_DIVISION;
+      }
+      if (btn_back) { gs_step_cursor = gs_gen_tmp.type; gs_state = GS_TYPE; }
+      break;
+
     // ── GATE_PERCENT ─────────────────────────────────────────────
     case GS_GATE_PERCENT:
       if (enc_up || enc_down) {
@@ -669,7 +715,9 @@ bool gs_handle_input(bool enc_up, bool enc_down, bool btn_valid, bool btn_back) 
         }
       }
       if (btn_valid) { gs_step_cursor = 0; gs_state = GS_OUT; }
-      if (btn_back)  { gs_state = GS_ROTATION; }
+      if (btn_back)  {
+        gs_state = (gs_gen_tmp.type == GEN_PATTERN) ? GS_DIVISION : GS_ROTATION;
+      }
       break;
 
     // ── OUT — sorties ────────────────────────────────────────────
@@ -726,6 +774,7 @@ static void gs_draw_current() {
     case GS_STEPS:        gs_draw_steps();         break;
     case GS_PULSES:       gs_draw_pulses();        break;
     case GS_ROTATION:     gs_draw_rotation();      break;
+    case GS_PATTERN:      gs_draw_pattern();       break;
     case GS_GATE_PERCENT: gs_draw_gate_percent();  break;
     case GS_OUT:         gs_draw_out();        break;
     case GS_OUT_CH:      gs_draw_out_ch();     break;

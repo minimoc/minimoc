@@ -937,10 +937,10 @@ function chanMaskLabel(mask) {
   return `×${bits.length}ch`;
 }
 
-// ── Générateurs (LFO / Euclidien) ───────────────────────────────────────────
+// ── Générateurs (LFO / Euclidien / Motif) ───────────────────────────────────
 // Doit rester synchronisé avec Generator/GeneratorType dans firmware/logic.h
 // et le protocole opcodes 0x12/0x13 dans firmware/PCEditor.h.
-const GEN_LFO = 0, GEN_EUCLID = 1;
+const GEN_LFO = 0, GEN_EUCLID = 1, GEN_PATTERN = 2;
 const LFO_SYNC_FREE = 0, LFO_SYNC_CLOCK = 1;
 const LFO_WAVEFORM_LABELS = ['Triangle', 'Sinus', 'Carré', 'Scie', 'Aléatoire'];
 const LFO_WAVEFORM_SHORT  = ['Tri', 'Sin', 'Car', 'Sci', 'Ale'];
@@ -948,16 +948,21 @@ const LFO_DIVISIONS = [
   { label: '1/16', ticks: 6 }, { label: '1/8', ticks: 12 }, { label: '1/4', ticks: 24 },
   { label: '1/2', ticks: 48 }, { label: '1', ticks: 96 }, { label: '2', ticks: 192 }, { label: '4', ticks: 384 },
 ];
-const GEN_MAX = 4;
+const GEN_MAX = 16;   // aligné sur FLUX_MAX côté firmware (logic.h)
 const EUCLID_STEPS_MAX = 16;
 const LFO_RATE_X10HZ_MIN = 1;    // 0.1 Hz
 const LFO_RATE_X10HZ_MAX = 500;  // 50.0 Hz
+// Noms uniquement — le contenu des motifs (DRUM_PATTERNS dans logic.h) reste
+// firmware-only, le web ne fait que choisir un index. Ordre et nombre à
+// garder synchronisés avec logic.h (même précédent que LFO_DIVISIONS).
+const DRUM_PATTERN_NAMES = ['Amen Break', 'Funky Drummer', 'Backbeat Simple'];
 
 function defaultGenerator() {
   return {
     type: GEN_LFO, active: true, waveform: 0, sync_mode: LFO_SYNC_FREE, rate_x10hz: 10,
     division_idx: 2, depth: 63, center: 64, cc_number: 1, note: 60,
-    euclid_steps: 8, euclid_pulses: 3, euclid_rotation: 0, gate_percent: 50, out: [],
+    euclid_steps: 8, euclid_pulses: 3, euclid_rotation: 0, gate_percent: 50,
+    pattern_id: 0, out: [],
   };
 }
 
@@ -986,6 +991,7 @@ function encodeGeneratorMsg(idx, gen) {
   for (const o of gen.out) {
     data.push(o.port, o.chan_mask & 0x7F, (o.chan_mask >> 7) & 0x7F, (o.chan_mask >> 14) & 0x03);
   }
+  data.push(gen.pattern_id || 0);   // octet ajouté en fin de message (v9, cf. PCEditor.h)
   return sysexMsg(data);
 }
 
@@ -993,9 +999,14 @@ function generatorSummary(g) {
   const rateOrDiv = g.sync_mode === LFO_SYNC_CLOCK
     ? (LFO_DIVISIONS[g.division_idx] || LFO_DIVISIONS[2]).label
     : `${(g.rate_x10hz / 10).toFixed(1)}Hz`;
-  const head = g.type === GEN_EUCLID
-    ? `Euc ${g.euclid_pulses}/${g.euclid_steps} ${rateOrDiv} N${g.note}`
-    : `${LFO_WAVEFORM_SHORT[g.waveform] || '?'} ${rateOrDiv} CC${g.cc_number}`;
+  let head;
+  if (g.type === GEN_PATTERN) {
+    head = `Pat ${DRUM_PATTERN_NAMES[g.pattern_id] || '?'} ${rateOrDiv}`;
+  } else if (g.type === GEN_EUCLID) {
+    head = `Euc ${g.euclid_pulses}/${g.euclid_steps} ${rateOrDiv} N${g.note}`;
+  } else {
+    head = `${LFO_WAVEFORM_SHORT[g.waveform] || '?'} ${rateOrDiv} CC${g.cc_number}`;
+  }
   const outs = (g.out || []).map(o => {
     const p = o.port + 1;
     if (!o.chan_mask) return `${p}:0c`;   // ne devrait pas arriver (élagué à l'édition) — visible si ça arrive quand même
@@ -1643,6 +1654,12 @@ function GeneratorEditor({ editingGenerator, editingIdx, onSave, onCancel }) {
         <div className="port-buttons" style={{ gap: 8 }}>
           <button className={`btn${draft.type === GEN_LFO ? ' primary' : ''}`} onClick={() => set('type', GEN_LFO)}>LFO</button>
           <button className={`btn${draft.type === GEN_EUCLID ? ' primary' : ''}`} onClick={() => set('type', GEN_EUCLID)}>Euclidien</button>
+          <button
+            className={`btn${draft.type === GEN_PATTERN ? ' primary' : ''}`}
+            onClick={() => setDraft(g => ({ ...g, type: GEN_PATTERN, sync_mode: LFO_SYNC_CLOCK }))}
+          >
+            Motif
+          </button>
         </div>
       </div>
 
@@ -1657,14 +1674,17 @@ function GeneratorEditor({ editingGenerator, editingIdx, onSave, onCancel }) {
         </div>
       )}
 
-      {/* Synchro — partagée LFO/Euclidien */}
-      <div className="flux-editor-row">
-        <div className="flux-editor-label">Synchro</div>
-        <div className="port-buttons" style={{ gap: 8 }}>
-          <button className={`btn${draft.sync_mode === LFO_SYNC_FREE ? ' primary' : ''}`} onClick={() => set('sync_mode', LFO_SYNC_FREE)}>Libre (Hz)</button>
-          <button className={`btn${draft.sync_mode === LFO_SYNC_CLOCK ? ' primary' : ''}`} onClick={() => set('sync_mode', LFO_SYNC_CLOCK)}>Synchro</button>
+      {/* Synchro — partagée LFO/Euclidien ; un Motif est toujours synchro
+          (forcé au choix du type ci-dessus), pas de bascule à proposer */}
+      {draft.type !== GEN_PATTERN && (
+        <div className="flux-editor-row">
+          <div className="flux-editor-label">Synchro</div>
+          <div className="port-buttons" style={{ gap: 8 }}>
+            <button className={`btn${draft.sync_mode === LFO_SYNC_FREE ? ' primary' : ''}`} onClick={() => set('sync_mode', LFO_SYNC_FREE)}>Libre (Hz)</button>
+            <button className={`btn${draft.sync_mode === LFO_SYNC_CLOCK ? ' primary' : ''}`} onClick={() => set('sync_mode', LFO_SYNC_CLOCK)}>Synchro</button>
+          </div>
         </div>
-      </div>
+      )}
 
       {draft.sync_mode === LFO_SYNC_FREE ? (
         <div className="flux-editor-row">
@@ -1698,7 +1718,7 @@ function GeneratorEditor({ editingGenerator, editingIdx, onSave, onCancel }) {
             <Stepper value={draft.cc_number} onStep={stepCC} min={0} max={127} />
           </div>
         </>
-      ) : (
+      ) : draft.type === GEN_EUCLID ? (
         <>
           <div className="flux-editor-row">
             <div className="flux-editor-label">Note</div>
@@ -1715,6 +1735,19 @@ function GeneratorEditor({ editingGenerator, editingIdx, onSave, onCancel }) {
           <div className="flux-editor-row">
             <div className="flux-editor-label">Rotation</div>
             <Stepper value={draft.euclid_rotation} onStep={stepRotation} min={0} max={Math.max(0, draft.euclid_steps - 1)} />
+          </div>
+          <div className="flux-editor-row">
+            <div className="flux-editor-label">Gate</div>
+            <Stepper value={draft.gate_percent} onStep={stepGate} min={1} max={100} format={v => `${v}%`} width={50} />
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flux-editor-row">
+            <div className="flux-editor-label">Motif</div>
+            <select value={draft.pattern_id} onChange={e => set('pattern_id', parseInt(e.target.value, 10))}>
+              {DRUM_PATTERN_NAMES.map((name, i) => <option key={i} value={i}>{name}</option>)}
+            </select>
           </div>
           <div className="flux-editor-row">
             <div className="flux-editor-label">Gate</div>
@@ -2655,8 +2688,11 @@ function App() {
             const top  = body[ptr++];
             outs.push({ port, chan_mask: lo | (mid << 7) | (top << 14) });
           }
+          // pattern_id (v9) : octet optionnel en fin de message — absent si
+          // connecté à un firmware antérieur au type PATTERN, défaut 0.
+          const pattern_id = ptr < body.length ? body[ptr++] : 0;
           const generators = [...(prev.generators || [])];
-          generators[idx] = { type, active, waveform, sync_mode, rate_x10hz, division_idx, depth, center, cc_number, note, euclid_steps, euclid_pulses, euclid_rotation, gate_percent, out: outs };
+          generators[idx] = { type, active, waveform, sync_mode, rate_x10hz, division_idx, depth, center, cc_number, note, euclid_steps, euclid_pulses, euclid_rotation, gate_percent, pattern_id, out: outs };
           return { ...prev, generators };
         }
 

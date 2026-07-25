@@ -1,5 +1,5 @@
 #pragma once
-// generators.h — boucle de service des générateurs (LFO + séquenceur euclidien)
+// generators.h — boucle de service des générateurs (LFO + euclidien + motifs)
 //
 // Inclus APRÈS _midi.h (utilise generators_send_cc()/generators_send_note_on()/
 // off()) : c'est ici, et seulement ici, que la phase/le pas calculé en amont
@@ -87,8 +87,33 @@ static inline void _gen_flush_euclid(uint8_t i, Generator &g, GeneratorRuntime &
         rt.pending_note_off = false;
     }
     if (rt.pending_note_on) {
-        generators_send_note_on(i, rt.active_note);
+        generators_send_note_on(i, rt.active_note, EUCLID_VELOCITY);
         rt.pending_note_on = false;
+    }
+}
+
+// GEN_PATTERN — pas de mode libre (toujours synchro) : rien à avancer ici,
+// juste vider les voix armées par generators_on_clock_tick() (logic.h).
+// Callable sans condition sur transport_running : rien n'est jamais armé de
+// nouveau pendant l'arrêt (cf. garde dans generators_on_clock_tick()), donc
+// il n'y a que d'éventuels Note OFF résiduels (generators_on_transport_stop())
+// à vider — même logique que la branche "transport à l'arrêt" pour l'euclidien.
+static inline void _gen_flush_pattern(uint8_t i, GeneratorRuntime &rt) {
+    // OFF avant ON sur toutes les voix (cohérent avec le reste du moteur —
+    // cf. retrigger euclidien ci-dessus).
+    for (uint8_t v = 0; v < PATTERN_MAX_VOICES; v++) {
+        PatternVoice &voice = rt.voices[v];
+        if (voice.pending_off) {
+            generators_send_note_off(i, voice.off_note);
+            voice.pending_off = false;
+        }
+    }
+    for (uint8_t v = 0; v < PATTERN_MAX_VOICES; v++) {
+        PatternVoice &voice = rt.voices[v];
+        if (voice.pending_on) {
+            generators_send_note_on(i, voice.note, voice.velocity);
+            voice.pending_on = false;
+        }
     }
 }
 
@@ -102,6 +127,13 @@ inline void generators_tick(uint32_t now_ms) {
         Generator        &g  = gen_list[i];
         GeneratorRuntime &rt = gen_rt[i];
         if (!g.active) continue;
+
+        if (g.type == GEN_PATTERN) {
+            // Pas de mode libre : toujours vider les voix, transport à
+            // l'arrêt ou non (cf. commentaire de _gen_flush_pattern).
+            _gen_flush_pattern(i, rt);
+            continue;
+        }
 
         if (transport_running) {
             if (g.type == GEN_LFO) _gen_flush_lfo(i, g, rt, dt);

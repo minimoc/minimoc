@@ -394,14 +394,14 @@ void generators_send_cc(uint8_t gen_idx, uint8_t value) {
 // Générateurs de type GEN_EUCLID — Note ON/OFF vers toutes les sorties,
 // même schéma que generators_send_cc() ci-dessus (réutilise SEND_NOTE_ON/
 // SEND_NOTE_OFF, déjà utilisées par handleNoteOn/handleNoteOff).
-void generators_send_note_on(uint8_t gen_idx, uint8_t note) {
+void generators_send_note_on(uint8_t gen_idx, uint8_t note, uint8_t velocity) {
     Generator &g = gen_list[gen_idx];
     for (uint8_t oi = 0; oi < g.n_out; oi++) {
         uint16_t mask = g.out[oi].chan_mask;
         for (uint16_t m = mask; m; m &= m-1) {
             uint8_t dc = __builtin_ctz(m) + 1;
-            SEND_NOTE_ON(g.out[oi].port, note, EUCLID_VELOCITY, dc, SRC_PC);
-            rec_push(SRC_PC, g.out[oi].port+1, 0x90, dc, note, EUCLID_VELOCITY);
+            SEND_NOTE_ON(g.out[oi].port, note, velocity, dc, SRC_PC);
+            rec_push(SRC_PC, g.out[oi].port+1, 0x90, dc, note, velocity);
         }
     }
 }

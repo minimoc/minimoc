@@ -256,22 +256,25 @@ inline void recompute_route_matrix() {
 }
 
 // -----------------------------------------------------------------
-// GÉNÉRATEURS — LFO (CC continu) et séquenceur euclidien (Note ON/OFF)
+// GÉNÉRATEURS — LFO (CC continu), séquenceur euclidien et motifs de batterie
+// pré-enregistrés (Note ON/OFF)
 // -----------------------------------------------------------------
 // Contrairement à un Flux, un générateur n'a pas d'entrée : il émet un flux
-// MIDI (CC continu pour un LFO, Note ON/OFF sur pas actifs pour un
-// séquenceur euclidien) indépendamment de tout message entrant. Le calcul
-// de phase/pas (ISR-safe, pas d'I/O MIDI) est séparé de l'envoi effectif
+// MIDI (CC continu pour un LFO, Note ON/OFF sur pas actifs pour l'euclidien
+// et les motifs) indépendamment de tout message entrant. Le calcul de
+// phase/pas (ISR-safe, pas d'I/O MIDI) est séparé de l'envoi effectif
 // (nécessite _midi.h, disponible seulement plus tard dans firmware.ino) —
 // cf. generators_on_clock_tick() ici, generators_send_cc()/
 // generators_send_note_on()/off() dans _midi.h et generators_tick() dans
-// generators.h. Les deux types partagent sync_mode/rate_x10hz/division_idx
-// (cadence des cycles pour le LFO, des pas pour l'euclidien) et out[].
+// generators.h. Les trois types partagent sync_mode/rate_x10hz/division_idx
+// (cadence des cycles pour le LFO, des pas pour euclidien/motif) et out[].
+// GEN_PATTERN est toujours en mode synchro (pas de bascule Libre proposée
+// dans l'IHM — un break n'a de sens que calé sur le tempo).
 
-#define GEN_MAX 4
+#define GEN_MAX 16   // aligné sur FLUX_MAX — pas de contrainte RAM/CPU à ce nombre
 
-enum GeneratorType : uint8_t { GEN_LFO, GEN_EUCLID };
-#define GEN_TYPE_COUNT 2
+enum GeneratorType : uint8_t { GEN_LFO, GEN_EUCLID, GEN_PATTERN };
+#define GEN_TYPE_COUNT 3
 
 enum LfoWaveform : uint8_t { LFO_TRIANGLE, LFO_SINE, LFO_SQUARE, LFO_SAW, LFO_RANDOM };
 #define LFO_WAVEFORM_COUNT 5
@@ -293,6 +296,60 @@ static const LfoDivision LFO_DIVISIONS[] = {
 #define EUCLID_STEPS_MAX 16
 #define EUCLID_VELOCITY  100  // vélocité fixe des Note ON euclidiens — pas de champ UI dédié dans cette itération
 
+// -----------------------------------------------------------------
+// GEN_PATTERN — bibliothèque de motifs de batterie figés dans le firmware
+// -----------------------------------------------------------------
+// Mapping General MIDI Drum (canal 10 côté récepteur) : 36=Grosse caisse,
+// 38=Caisse claire, 42=Charley fermée, 46=Charley ouverte.
+// Interprétations volontairement simplifiées (1 mesure, grille 1/16) — pas
+// des transcriptions forensiques note-à-note des enregistrements originaux,
+// mais des motifs reconnaissables dans le même esprit, prêts à affiner.
+// `step` est relatif à la division choisie par l'utilisateur (GS_DIVISION) :
+// avec 1/16 ça sonne comme écrit ici, avec 1/8 le motif joue deux fois plus
+// lentement, etc. — même principe que la longueur de cycle d'un Euclidien.
+struct PatternEvent { uint8_t step; uint8_t note; uint8_t velocity; };
+
+struct DrumPattern {
+    const char*         name;
+    uint8_t             length_steps;
+    uint8_t             n_events;
+    const PatternEvent* events;
+};
+
+static const PatternEvent AMEN_BREAK_EVENTS[] = {
+    {0,36,120}, {0,42,90}, {2,42,80}, {4,38,110}, {4,42,85}, {6,38,100}, {6,42,80},
+    {8,42,85}, {10,36,115}, {10,42,80}, {12,38,110}, {12,42,90}, {13,38,95}, {14,42,80},
+};
+static const PatternEvent FUNKY_DRUMMER_EVENTS[] = {
+    {0,36,120}, {0,42,90}, {2,42,75}, {4,38,115}, {4,42,85}, {6,42,75},
+    {7,36,100}, {8,42,90}, {10,36,105}, {10,42,75}, {12,38,115}, {12,42,90}, {14,46,70},
+};
+static const PatternEvent BACKBEAT_SIMPLE_EVENTS[] = {
+    {0,36,120}, {0,42,90}, {2,42,70}, {3,36,100}, {4,38,115}, {4,42,90},
+    {6,42,70}, {8,36,110}, {8,42,90}, {10,42,70}, {11,36,95}, {12,38,115}, {12,42,90}, {14,42,70},
+};
+
+static const DrumPattern DRUM_PATTERNS[] = {
+    { "Amen Break",      16, sizeof(AMEN_BREAK_EVENTS)      / sizeof(PatternEvent), AMEN_BREAK_EVENTS },
+    { "Funky Drummer",   16, sizeof(FUNKY_DRUMMER_EVENTS)   / sizeof(PatternEvent), FUNKY_DRUMMER_EVENTS },
+    { "Backbeat Simple", 16, sizeof(BACKBEAT_SIMPLE_EVENTS) / sizeof(PatternEvent), BACKBEAT_SIMPLE_EVENTS },
+};
+#define DRUM_PATTERN_COUNT (sizeof(DRUM_PATTERNS) / sizeof(DrumPattern))
+
+// Voix simultanées d'un générateur GEN_PATTERN — un motif peut déclencher
+// plusieurs notes sur le même pas (ex. grosse caisse + charley), contrairement
+// à l'euclidien qui n'a jamais qu'une seule note active à la fois.
+#define PATTERN_MAX_VOICES 4
+struct PatternVoice {
+    bool     gate_active;
+    uint8_t  note;            // note active OU en attente d'envoi (pending_on) — même rôle double que GeneratorRuntime.active_note pour l'euclidien
+    uint8_t  velocity;        // vélocité à envoyer (pending_on), propre à chaque événement du motif
+    int32_t  off_ticks;       // pulses d'horloge restants avant Note OFF
+    bool     pending_on;
+    bool     pending_off;
+    uint8_t  off_note;        // note à couper — capturée avant réassignation de la voix
+};
+
 struct Generator {
     uint8_t     type;           // GeneratorType
     bool        active;
@@ -307,7 +364,8 @@ struct Generator {
     uint8_t     euclid_steps;   // EUCLID uniquement : nb de pas, 1-EUCLID_STEPS_MAX
     uint8_t     euclid_pulses;  // EUCLID uniquement : nb de hits, 0-euclid_steps
     uint8_t     euclid_rotation;// EUCLID uniquement : rotation du motif, 0-(euclid_steps-1)
-    uint8_t     gate_percent;   // EUCLID uniquement : durée du gate en % du pas, 1-100
+    uint8_t     gate_percent;   // EUCLID + PATTERN : durée du gate en % du pas, 1-100
+    uint8_t     pattern_id;     // PATTERN uniquement : index dans DRUM_PATTERNS
     uint8_t     n_out;
     FluxOutSlot out[FLUX_MAX_OUT];   // réutilise FluxOutSlot — chan_mask ne doit
                                       // JAMAIS être 0 ici (pas de canal source à
@@ -334,6 +392,9 @@ struct GeneratorRuntime {
     uint32_t gate_off_ms;      // mode libre : timestamp millis() du Note OFF
     bool     pending_note_on;  // Note ON prête à être envoyée par generators_tick() (note = active_note)
     bool     pending_note_off; // Note OFF prête à être envoyée par generators_tick() (note = off_note)
+    // PATTERN — plusieurs voix simultanées possibles (ex. grosse caisse + charley sur le même pas)
+    uint8_t      pattern_step; // pas courant, 0..length_steps-1
+    PatternVoice voices[PATTERN_MAX_VOICES];
 };
 GeneratorRuntime gen_rt[GEN_MAX];
 
@@ -429,37 +490,90 @@ inline void generators_on_clock_tick() {
             continue;
         }
 
-        // GEN_EUCLID
-        // 1) Fermeture du gate en cours si son décompte est écoulé.
-        if (rt.gate_active && rt.gate_off_ticks > 0) {
-            rt.gate_off_ticks--;
-            if (rt.gate_off_ticks == 0) {
-                rt.off_note         = rt.active_note;
-                rt.pending_note_off = true;
-                rt.gate_active       = false;
+        if (g.type == GEN_EUCLID) {
+            // 1) Fermeture du gate en cours si son décompte est écoulé.
+            if (rt.gate_active && rt.gate_off_ticks > 0) {
+                rt.gate_off_ticks--;
+                if (rt.gate_off_ticks == 0) {
+                    rt.off_note         = rt.active_note;
+                    rt.pending_note_off = true;
+                    rt.gate_active       = false;
+                }
+            }
+            // 2) Si on entre dans un pas (clock_ticks==0), évaluer le motif
+            //    IMMÉDIATEMENT — évaluer après l'incrément (comme avant)
+            //    retardait chaque hit d'une division entière par rapport à
+            //    la grille (bug rapporté : rythme décalé d'1/16).
+            if (rt.clock_ticks == 0) {
+                uint16_t pattern = euclid_pattern(g.euclid_steps, g.euclid_pulses, g.euclid_rotation);
+                bool hit = g.euclid_steps > 0 && ((pattern >> rt.euclid_step) & 1u);
+                if (hit) {
+                    if (rt.gate_active) {   // gate encore ouvert (gate_percent proche de 100%) : couper avant le retrigger
+                        rt.off_note         = rt.active_note;
+                        rt.pending_note_off = true;
+                    }
+                    rt.active_note     = g.note;
+                    rt.pending_note_on = true;
+                    rt.gate_active      = true;
+                    uint16_t gate_ticks = (uint16_t)((uint32_t)total * g.gate_percent / 100u);
+                    rt.gate_off_ticks   = (gate_ticks == 0) ? 1 : gate_ticks;
+                }
+            }
+            // 3) Avance du compteur ; au terme de la durée du pas, passe au pas suivant.
+            rt.clock_ticks++;
+            if (rt.clock_ticks >= total) {
+                rt.clock_ticks = 0;
+                if (g.euclid_steps > 0) {
+                    rt.euclid_step++;
+                    if (rt.euclid_step >= g.euclid_steps) rt.euclid_step = 0;
+                }
+            }
+            continue;
+        }
+
+        // GEN_PATTERN — plusieurs voix simultanées (cf. PatternVoice)
+        if (g.pattern_id >= DRUM_PATTERN_COUNT) continue;   // borne défensive (ex. preset corrompu)
+        const DrumPattern &pat = DRUM_PATTERNS[g.pattern_id];
+        // 1) Fermeture des gates de voix dont le décompte est écoulé.
+        for (uint8_t v = 0; v < PATTERN_MAX_VOICES; v++) {
+            PatternVoice &voice = rt.voices[v];
+            if (!voice.gate_active || voice.off_ticks <= 0) continue;
+            voice.off_ticks--;
+            if (voice.off_ticks == 0) {
+                voice.off_note     = voice.note;
+                voice.pending_off  = true;
+                voice.gate_active   = false;
             }
         }
-        // 2) Avance du pas ; au wrap, évalue le motif et arme un Note ON si actif.
+        // 2) Si on entre dans un pas (clock_ticks==0), armer un Note ON par
+        //    événement du motif tombant sur ce pas IMMÉDIATEMENT (même fix
+        //    que l'euclidien ci-dessus — sinon retard d'une division entière).
+        //    Une voix libre par événement ; si aucune voix libre, l'événement
+        //    est silencieusement ignoré (cas limite non attendu avec une
+        //    bibliothèque de motifs curatée).
+        if (rt.clock_ticks == 0) {
+            for (uint8_t e = 0; e < pat.n_events; e++) {
+                if (pat.events[e].step != rt.pattern_step) continue;
+                uint8_t vfree = PATTERN_MAX_VOICES;
+                for (uint8_t v = 0; v < PATTERN_MAX_VOICES; v++) {
+                    if (!rt.voices[v].gate_active && !rt.voices[v].pending_on) { vfree = v; break; }
+                }
+                if (vfree == PATTERN_MAX_VOICES) continue;   // 4 voix déjà occupées : hit ignoré
+                PatternVoice &voice = rt.voices[vfree];
+                voice.note          = pat.events[e].note;
+                voice.velocity      = pat.events[e].velocity;
+                voice.pending_on    = true;
+                voice.gate_active    = true;
+                uint16_t gate_ticks = (uint16_t)((uint32_t)total * g.gate_percent / 100u);
+                voice.off_ticks     = (gate_ticks == 0) ? 1 : gate_ticks;
+            }
+        }
+        // 3) Avance du compteur ; au terme de la durée du pas, passe au pas suivant.
         rt.clock_ticks++;
         if (rt.clock_ticks >= total) {
             rt.clock_ticks = 0;
-            uint16_t pattern = euclid_pattern(g.euclid_steps, g.euclid_pulses, g.euclid_rotation);
-            bool hit = g.euclid_steps > 0 && ((pattern >> rt.euclid_step) & 1u);
-            if (hit) {
-                if (rt.gate_active) {   // gate encore ouvert (gate_percent proche de 100%) : couper avant le retrigger
-                    rt.off_note         = rt.active_note;
-                    rt.pending_note_off = true;
-                }
-                rt.active_note     = g.note;
-                rt.pending_note_on = true;
-                rt.gate_active      = true;
-                uint16_t gate_ticks = (uint16_t)((uint32_t)total * g.gate_percent / 100u);
-                rt.gate_off_ticks   = (gate_ticks == 0) ? 1 : gate_ticks;
-            }
-            if (g.euclid_steps > 0) {
-                rt.euclid_step++;
-                if (rt.euclid_step >= g.euclid_steps) rt.euclid_step = 0;
-            }
+            rt.pattern_step++;
+            if (rt.pattern_step >= pat.length_steps) rt.pattern_step = 0;
         }
     }
 }
@@ -482,22 +596,42 @@ inline void generators_on_transport_reset() {
                 rt.pending_note_off = true;
                 rt.gate_active       = false;
             }
+        } else if (gen_list[i].type == GEN_PATTERN) {
+            rt.pattern_step = 0;
+            for (uint8_t v = 0; v < PATTERN_MAX_VOICES; v++) {
+                PatternVoice &voice = rt.voices[v];
+                if (voice.gate_active) {
+                    voice.off_note    = voice.note;
+                    voice.pending_off = true;
+                    voice.gate_active  = false;
+                }
+            }
         }
     }
 }
 
-// Ferme immédiatement toute note euclidienne encore ouverte à l'arrêt du
-// transport (STOP/PAUSE, cf. _sync_forward() dans _midi.h) — pas d'I/O MIDI
-// ici, juste les flags pending_note_off/off_note ; l'envoi réel reste fait
+// Ferme immédiatement toute note euclidienne/motif encore ouverte à l'arrêt
+// du transport (STOP/PAUSE, cf. _sync_forward() dans _midi.h) — pas d'I/O
+// MIDI ici, juste les flags pending_off/off_note ; l'envoi réel reste fait
 // par generators_tick() (generators.h), comme partout ailleurs dans ce moteur.
 inline void generators_on_transport_stop() {
     for (uint8_t i = 0; i < gen_count; i++) {
-        if (gen_list[i].type != GEN_EUCLID) continue;
         GeneratorRuntime &rt = gen_rt[i];
-        if (rt.gate_active) {
-            rt.off_note         = rt.active_note;
-            rt.pending_note_off = true;
-            rt.gate_active       = false;
+        if (gen_list[i].type == GEN_EUCLID) {
+            if (rt.gate_active) {
+                rt.off_note         = rt.active_note;
+                rt.pending_note_off = true;
+                rt.gate_active       = false;
+            }
+        } else if (gen_list[i].type == GEN_PATTERN) {
+            for (uint8_t v = 0; v < PATTERN_MAX_VOICES; v++) {
+                PatternVoice &voice = rt.voices[v];
+                if (voice.gate_active) {
+                    voice.off_note    = voice.note;
+                    voice.pending_off = true;
+                    voice.gate_active  = false;
+                }
+            }
         }
     }
 }
