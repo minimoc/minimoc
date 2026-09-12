@@ -89,11 +89,15 @@ inline void rec_push(uint8_t source, uint8_t output, uint8_t type, uint8_t ch, u
 }
 
 // ----------------------------------------------------------------
-// sd_setup — init SD + ouverture de session
+// sd_setup — montage de la carte SD (toujours, presets/MTP en dépendent)
+// + ouverture de la session d'enregistrement continu si activé
+// (SD_RECORDER_ENABLED, voir firmware.ino)
 // ----------------------------------------------------------------
 void sd_setup() {
     if (!sd.begin(SdioConfig(FIFO_SDIO))) return;
+    sd_ok = true;
 
+#ifdef SD_RECORDER_ENABLED
     // Numéro de session : lire EEPROM, incrémenter, sauvegarder
     uint8_t session = 0;
     EEPROM.get(REC_SESSION_EEPROM_ADDR, session);
@@ -112,8 +116,8 @@ void sd_setup() {
         return;
     }
 
-    sd_ok      = true;
     rec_active = true;
+#endif
 }
 
 // ----------------------------------------------------------------

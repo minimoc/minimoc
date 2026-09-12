@@ -1,5 +1,16 @@
 [
-  
+ {
+    "version": "v0.5.1",
+    "filename": "minimoc_v0.5.1.hex",
+    "date": "2026-08-29",
+    "description": "Correction d'un bug majeur sur les preset de la 0.5.0"
+  },  
+ {
+    "version": "v0.5.0",
+    "filename": "minimoc_v0.5.0.hex",
+    "date": "2026-07-25",
+    "description": "Générateurs + mode Accords (transformateurs)"
+  },  
  {
     "version": "v0.4.1",
     "filename": "minimoc_v0.4.1.hex",

@@ -1,7 +1,9 @@
-#define FIRMWARE_VERSION "v0.5.0"
+#define FIRMWARE_VERSION "v0.5.1"
 
-// Décommenter pour activer l'enregistrement MIDI en tâche de fond sur carte SD.
-// Désactivé : sd_tick() et MTP ne tournent pas → latence réduite, sync plus stable.
+// Décommenter pour activer l'enregistrement MIDI continu en tâche de fond sur
+// carte SD (+ MTP). Désactivé : sd_tick() et MTP ne tournent pas → latence
+// réduite, sync plus stable. Le montage SD et les presets restent actifs
+// dans tous les cas (voir sd_setup() dans sd_recorder.h).
 //#define SD_RECORDER_ENABLED
 
 #define MIDIA MIDIA_5
@@ -191,13 +193,17 @@ Serial2.addMemoryForRead(new uint8_t[1024], 1024); // On passe de 64 à 1024 oct
   carousel_register("SYSTEM",    icon_info_16,     icon_info_32,     NULL);
   carousel_register("TRANSPORT", icon_sync_16,     icon_sync_32,     NULL);  // icône réutilisée (horloge) — à remplacer si besoin
 
-#ifdef SD_RECORDER_ENABLED
+  // Montage SD + presets : toujours actif, indépendant de SD_RECORDER_ENABLED
+  // (qui ne contrôle que l'enregistrement MIDI continu, voir sd_recorder.h)
   sd_setup();
   if (sd_ok) {
     sd_preset_init();
+#ifdef SD_RECORDER_ENABLED
     sd_mtp_fs.init(sd);
     MTP.addFilesystem(sd_mtp_fs, "MiniMoc SD");
+#endif
   }
+#ifdef SD_RECORDER_ENABLED
   MTP.begin();
 #endif
 
