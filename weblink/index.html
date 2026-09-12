@@ -812,6 +812,11 @@ const WEBLINK_VERSION = '0.3.0';
 // fetch/href qui doivent atteindre versions.json ou firmwares/ quelle que
 // soit la profondeur du fichier — voir memory "weblink_versioning".
 const WEBLINK_BASE = '';
+// Enregistrement MIDI continu sur SD reporté après la V1 (cf. firmware/sd_recorder.h,
+// SD_RECORDER_ENABLED désactivé) — le convertisseur DAT → MIDI n'a plus lieu d'être
+// tant qu'aucun firmware ne produit de fichier .DAT. Onglet masqué, code conservé
+// pour réactivation le jour où l'enregistrement est fini et relivré.
+const DAT2MIDI_ENABLED = false;
 const N_IN   = 5;
 const N_OUT  = 9;
 const IN_LABELS  = ['A', 'B', 'C', 'D', 'E'];
@@ -3050,7 +3055,7 @@ function App() {
             { id: 'generateurs', icon: '∿', label: 'GENERATEURS' },
             { id: 'host',     icon: '⚙', label: 'HOST CONFIG'  },
             { id: 'firmware', icon: '⬆', label: 'FIRMWARE'     },
-            { id: 'dat2midi', icon: '♪', label: 'DAT → MIDI'   },
+            ...(DAT2MIDI_ENABLED ? [{ id: 'dat2midi', icon: '♪', label: 'DAT → MIDI' }] : []),
           ].map(item => (
             <div
               key={item.id}
@@ -3469,8 +3474,9 @@ function App() {
             />
           )}
 
-          {/* ═══ DAT → MIDI ═══ — accessible sans connexion MIDI active */}
-          {midiSupported && section === 'dat2midi' && (
+          {/* ═══ DAT → MIDI ═══ — accessible sans connexion MIDI active
+              (désactivé avec l'enregistrement SD continu, cf. DAT2MIDI_ENABLED) */}
+          {DAT2MIDI_ENABLED && midiSupported && section === 'dat2midi' && (
             <DatToMidiSection showToast={showToast} />
           )}
         </main>

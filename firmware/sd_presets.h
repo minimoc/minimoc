@@ -205,6 +205,20 @@ bool sd_preset_save(uint8_t num) {
 // ----------------------------------------------------------------
 // sd_preset_load — v2 avec migration v1
 // ----------------------------------------------------------------
+// Borne défensive des champs sensibles de gen_list après lecture depuis la
+// carte SD (preset corrompu, écrit à la main, ou provenant d'un format futur)
+// — même logique que le clamp déjà fait côté SysEx (cf. PCEditor.h, opcode
+// 0x12). Sans ça, un division_idx hors bornes lit LFO_DIVISIONS hors tableau
+// (logic.h:478) : comportement indéfini, et si le "ticks" lu par erreur vaut
+// 0, division par zéro pour un générateur LFO synchronisé (logic.h:483).
+static inline void _gen_list_sanitize(uint8_t count) {
+    for (uint8_t i = 0; i < count; i++) {
+        if (gen_list[i].division_idx >= LFO_DIVISION_COUNT) gen_list[i].division_idx = 0;
+        if (gen_list[i].rate_x10hz < LFO_RATE_X10HZ_MIN || gen_list[i].rate_x10hz > LFO_RATE_X10HZ_MAX)
+            gen_list[i].rate_x10hz = LFO_RATE_X10HZ_DEFAULT;
+    }
+}
+
 bool sd_preset_load(uint8_t num) {
     if (!sd_ok || num < 1 || num > SD_PRESET_MAX) return false;
 
@@ -361,6 +375,7 @@ bool sd_preset_load(uint8_t num) {
                 gen_list[i].n_out = legacy[i].n_out;
                 memcpy(gen_list[i].out, legacy[i].out, sizeof(legacy[i].out));
             }
+            _gen_list_sanitize(gen_count);
         }
         recompute_route_matrix();
     } else if (hdr.version == 8) {
@@ -399,6 +414,7 @@ bool sd_preset_load(uint8_t num) {
                 gen_list[i].n_out = legacy[i].n_out;
                 memcpy(gen_list[i].out, legacy[i].out, sizeof(legacy[i].out));
             }
+            _gen_list_sanitize(gen_count);
         }
         recompute_route_matrix();
     } else {   // v9 : basic_matrix + flux + gen_count/gen_list (LFO + euclidien + motif)
@@ -411,8 +427,10 @@ bool sd_preset_load(uint8_t num) {
         uint8_t gc = 0;
         f.read(&gc, 1);
         gen_count = min(gc, (uint8_t)GEN_MAX);
-        if (gen_count > 0)
+        if (gen_count > 0) {
             f.read(gen_list, gen_count * sizeof(Generator));
+            _gen_list_sanitize(gen_count);
+        }
         recompute_route_matrix();
     }
 

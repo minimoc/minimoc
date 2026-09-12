@@ -1,4 +1,4 @@
-#define FIRMWARE_VERSION "v0.5.1"
+#define FIRMWARE_VERSION "v0.5.2"
 
 // Décommenter pour activer l'enregistrement MIDI continu en tâche de fond sur
 // carte SD (+ MTP). Désactivé : sd_tick() et MTP ne tournent pas → latence
