@@ -7,6 +7,40 @@ Le versionnage suit [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
+## [0.5.2] — 2026-09-12
+
+### Modifié
+
+- **Enregistrement MIDI continu sur SD reporté après la V1** : décision explicite de ne
+  pas livrer cette fonctionnalité avec la V1 (`SD_RECORDER_ENABLED` reste désactivé par
+  défaut) tant qu'il n'existe pas de commande manuelle pour démarrer/arrêter un
+  enregistrement et fermer proprement le fichier (`sd_close()` toujours jamais appelé).
+  Le montage de la carte SD et les presets restent actifs indépendamment (cf. 0.5.1).
+- Éditeur web : onglet **DAT → MIDI** masqué en conséquence (flag `DAT2MIDI_ENABLED`
+  dans `weblink/index.html`) — code conservé pour réactivation le jour où
+  l'enregistrement continu sera retravaillé.
+
+### Corrigé
+
+- **Bornes défensives sur les générateurs chargés depuis un preset SD** : `division_idx`
+  et `rate_x10hz` n'étaient pas validés à la lecture d'un preset (formats v7/v8/v9,
+  `firmware/sd_presets.h`), contrairement au chemin SysEx (éditeur web) qui les
+  clampait déjà. Un preset corrompu ou hors-format pouvait provoquer une lecture hors
+  tableau de `LFO_DIVISIONS` et, si la valeur lue par erreur valait 0, une division par
+  zéro pour un générateur LFO synchronisé.
+
+## [0.5.1] — 2026-08-29
+
+### Corrigé
+
+- **Régression majeure sur les presets SD**, introduite par erreur en 0.4.0 (commit
+  "ajout transformateurs") : `sd_setup()` / `sd_preset_init()` avaient été encapsulés
+  dans `#ifdef SD_RECORDER_ENABLED`, désactivé par défaut dans la foulée du même
+  commit — la carte SD n'était donc plus montée et les presets plus initialisés dans
+  aucun build par défaut, de la 0.4.0 à la 0.5.0 incluses. Le montage SD et
+  l'initialisation des presets sont désormais indépendants de `SD_RECORDER_ENABLED`,
+  qui ne contrôle plus que l'enregistrement continu (et MTP).
+
 ## [0.5.0] — 2026-07-25
 
 ### Ajouté
@@ -331,4 +365,4 @@ Le versionnage suit [Semantic Versioning](https://semver.org/lang/fr/).
 
 ---
 
-*Changelog généré à partir du code source du firmware — version interne `v2.0.2`.*
+*Changelog maintenu à la main à partir de l'historique du firmware — dernière mise à jour : v0.5.2.*

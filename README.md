@@ -3,7 +3,7 @@
 **Routeur MIDI hybride DAWless, fait main.**
 
 
-🇬🇧 In English — miniMoc is a handmade, open-hardware DAWless MIDI router built around a Teensy 4.1: 5 MIDI inputs, 9 outputs, TRS TYPE A + USB Host, a 128x64 OLED screen and a rotary encoder. Route MIDI between your synths and machines with no computer. Its signature feature, Smart Mirror: plug in a PC and the miniMoc's physical ports reappear as identical virtual ports in your DAW — no setup, no drivers. Unplug and you're back to standalone mode. The project is at v0.2 (routing, Smart Mirror and SD presets are solid; MIDI auto-recording is work in progress). Documentation is currently in French — English translation contributions are very welcome (see CONTRIBUTING.md). Licence: source-available, non-commercial (PolyForm NC for firmware, CC BY-NC for hardware) — personal use is free, commercial use requires permission.
+🇬🇧 In English — miniMoc is a handmade, open-hardware DAWless MIDI router built around a Teensy 4.1: 5 MIDI inputs, 9 outputs, TRS TYPE A + USB Host, a 128x64 OLED screen and a rotary encoder. Route MIDI between your synths and machines with no computer. Its signature feature, Smart Mirror: plug in a PC and the miniMoc's physical ports reappear as identical virtual ports in your DAW — no setup, no drivers. Unplug and you're back to standalone mode. The project is at v0.5.2 (routing, Smart Mirror, MIDI clock sync, Flux transforms — transpose/harmonize/chord progressions —, MIDI generators — LFO/Euclidean/drum patterns — and SD presets are solid; continuous MIDI auto-recording to SD is postponed to a future version). Documentation is currently in French — English translation contributions are very welcome (see CONTRIBUTING.md). Licence: source-available, non-commercial (PolyForm NC for firmware, CC BY-NC for hardware) — personal use is free, commercial use requires permission.
 
 
 Le miniMoc est un boîtier portable qui route le MIDI entre vos synthés, séquenceurs
@@ -27,20 +27,28 @@ et un encodeur pour tout piloter à la main.
 
 ---
 
-## État du projet — v0.2
+## État du projet — v0.5.2
 
-Le miniMoc en est à sa version 0.2, assemblée à la main.
+Le miniMoc en est à sa version 0.5.2, assemblée à la main.
 
 **Ce qui fonctionne et est éprouvé :**
-- Routage MIDI complet (modes BASIC et ADVANCED)
+- Routage MIDI complet (mode BASIC par matrice, mode FLUX avancé avec filtrage et
+  remapping de canal)
 - Smart Mirror (miroir des ports physiques vers le DAW)
-- Sauvegarde / rappel des configurations sur carte SD
+- Synchronisation MIDI Clock (horloge interne réglable ou source externe) + écran TRANSPORT
+- Transformateurs de Flux : transposition, harmonisation, réharmonisation sur une
+  progression d'accords
+- Générateurs MIDI internes : LFO, séquenceur euclidien, motifs de batterie pré-enregistrés
+- Sauvegarde / rappel des configurations sur carte SD (32 presets utilisateur + 8 d'usine)
 - Interface écran OLED + encodeur
+- Mise à jour du firmware par OTA depuis l'éditeur web
 
-**En chantier :**
-- Auto-enregistrement MIDI (capture automatique des jams) — fonctionnel mais en
-  cours de mise au point. C'est précisément là que les retours des premiers
-  utilisateurs sont les plus utiles.
+**Reporté après la V1 :**
+- Auto-enregistrement MIDI continu sur carte SD (capture automatique des jams). Le moteur
+  existe dans le code mais reste désactivé par défaut : pas de commande pour démarrer/
+  arrêter un enregistrement à la volée, pas de fermeture propre du fichier en cours
+  d'usage. Sera retravaillé pour une version ultérieure — vos retours d'usage sur ce
+  point précis restent les bienvenus.
 
 ---
 
@@ -48,8 +56,9 @@ Le miniMoc en est à sa version 0.2, assemblée à la main.
 
 Le miniMoc est un projet dans un esprit maker. Ce n'est pas un
 produit fini sous coque fermée : il se présente sous forme de carte (PCB) avec son
-Teensy 4.1, et un *bezel* maintient l'écran en position. Il n'y a pas (encore) de
-boîtier complet — c'est un terrain de contribution ouvert pour qui aime la CAO.
+Teensy 4.1, et un *bezel* maintient l'écran en position. Des premiers fichiers 3D de
+boîtier et de socle existent (dossiers [`boitier/`](boitier/) et [`socle/`](socle/))
+mais restent perfectibles — c'est un terrain de contribution ouvert pour qui aime la CAO.
 
 ---
 

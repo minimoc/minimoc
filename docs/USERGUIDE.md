@@ -1,6 +1,6 @@
 # Mode d'emploi — miniMoc
 
-> Version 0.3.0
+> Version 0.5.2
 
 ---
 
@@ -37,9 +37,14 @@ Le **miniMoc** est un routeur MIDI hardware fait main, conçu pour fonctionner *
 - **Smart Mirror** : les ports physiques apparaissent automatiquement dans votre DAW quand vous branchez un PC — sans driver, sans configuration
 - Synchronisation MIDI Clock : choix d'un maître parmi 10 sources externes (TRS/USB Host physique ou câble USB/PC, au choix) **ou l'horloge interne du miniMoc lui-même**, diffusion sur toutes les sorties
 - Menu **TRANSPORT** : réglage du tempo de l'horloge interne, Play/Pause/Stop, et pilotage d'un enregistreur externe (MMC Record/Avance/Rewind)
+- **Transformateurs de Flux** : transposition, harmonisation, réharmonisation sur une progression d'accords
+- **Générateurs** internes : LFO, séquenceur euclidien, motifs de batterie pré-enregistrés
 - 32 presets utilisateur + 8 presets d'usine, stockés sur carte SD
-- Enregistrement automatique de toutes les données MIDI sur carte SD
 - Mise à jour firmware OTA via l'éditeur web
+
+> L'enregistrement MIDI continu sur carte SD (capture automatique des jams) fait partie
+> du projet mais est **désactivé par défaut et reporté après la V1** — voir
+> [§11](#11-enregistrement-midi-sur-carte-sd).
 
 ---
 
@@ -360,27 +365,19 @@ Depuis **SYSTEME** :
 
 ## 11. Enregistrement MIDI sur carte SD
 
-Le miniMoc **enregistre automatiquement** tous les messages MIDI routés sur la carte SD, dans `/REC/REC001.DAT` à `/REC099.DAT`.
+> ⚠️ **Reporté après la V1.** Le moteur d'enregistrement continu (ring buffer → écriture
+> SD, format `.DAT`) existe dans le firmware mais est **désactivé par défaut**
+> (`SD_RECORDER_ENABLED`) : il n'y a pas encore de commande pour démarrer/arrêter un
+> enregistrement à la volée, ni de fermeture propre du fichier en cours d'usage. En
+> conséquence, l'onglet **DAT → MIDI** de l'éditeur web est également masqué tant que
+> cette fonctionnalité n'est pas retravaillée. Le reste de cette section décrit le
+> fonctionnement prévu, pour référence.
+
+Une fois réactivé, le miniMoc enregistre automatiquement tous les messages MIDI routés sur la carte SD, dans `/REC/REC001.DAT` à `/REC099.DAT`.
 
 - L'enregistrement est en **anneau** (ring buffer) : REC099 plein → REC001 écrasé
 - Format propriétaire `.DAT` (10 octets/événement : horodatage, source, destination, type, canal, données)
-
-### Convertir les enregistrements en fichiers MIDI standard
-
-Utilisez l'onglet **DAT → MIDI** de l'éditeur web :
-
-1. Récupérez le fichier `.dat` depuis la carte SD
-   - Branchez le miniMoc en USB — il apparaît comme **disque amovible** sous Windows
-   - Copiez le fichier depuis `/REC/`
-2. Dans l'éditeur web, onglet **DAT → MIDI** :
-   - Chargez le fichier `.dat`
-   - Les événements s'affichent dans un tableau
-3. Configurez l'export :
-   - **Diviser par** : sortie physique ou source d'entrée
-   - **BPM** : tempo du fichier MIDI résultant (défaut 120)
-   - **PPQ** : résolution temporelle (défaut 960)
-4. Cochez les pistes à exporter
-5. Cliquez **Convertir** → téléchargement du fichier `.mid`
+- La conversion en fichier MIDI standard se fera via un onglet **DAT → MIDI** de l'éditeur web, réactivé en même temps que l'enregistrement.
 
 ---
 
@@ -413,10 +410,10 @@ Ouvrez le fichier `weblink/index.html` depuis votre navigateur, ou accédez à l
 |--------|----------|
 | **SYNC** | Choisir la source d'horloge maître (11 sources + OFF), régler le tempo de l'horloge interne (boutons −/+, appui maintenu = défilement continu) et piloter le transport (▶/⏸ ⏹ ⏺ ⏪ ⏩) |
 | **MATRICE** | Routage basique (grille 5×9) |
-| **FLUX** | Routage avancé (filtrage et remapping de canaux) |
+| **FLUX** | Routage avancé (filtrage, remapping de canaux, transformateurs) |
+| **GENERATEURS** | Configuration des générateurs MIDI internes (LFO, séquenceur euclidien, motifs) |
 | **HOST CONFIG** | Gestion des appareils USB |
 | **FIRMWARE** | Mise à jour du firmware |
-| **DAT → MIDI** | Conversion des enregistrements SD en fichiers MIDI |
 
 ---
 
